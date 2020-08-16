@@ -1,2 +1,24 @@
 
-http://www.hechaku.com/arcitle/201810397.html
+参照 ：http://www.hechaku.com/arcitle/201810397.html
+
+利用脚本，一键设置java环境变量(默认安装路径)
+
+@echo off
+color 0a
+echo.------------------------------------
+echo.TODO:设置java环境变量
+echo.Author:Cheney_Yang
+echo.Feedback E-mail:yangcheney@qq.com
+echo.
+echo.------------------------------------
+::如果有的话，先删除JAVA_HOME
+wmic ENVIRONMENT where "name='JAVA_HOME'" delete
+::如果有的话，先删除ClASSPATH 
+wmic ENVIRONMENT where "name='CLASSPATH'" delete
+::创建JAVA_HOME
+wmic ENVIRONMENT create name="JAVA_HOME",username="<system>",VariableValue="C:\Program Files (x86)\Java\jdk1.6.0_21"
+::增加PATH中关于java的环境变量
+wmic ENVIRONMENT where "name='path' and username='<system>'" set VariableValue="%path%;%JAVA_HOME%\bin;%JAVA_HOME%\jre\bin"
+::创建CLASSPATH
+wmic ENVIRONMENT create name="CLASSPATH",username="<system>",VariableValue=".;%JAVA_HOME%\lib\dt.jar;%JAVA_HOME%\lib\tools.jar;"
+pause
