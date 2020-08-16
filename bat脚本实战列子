@@ -1,0 +1,4696 @@
+人学习批处理的初衷来源于实际工作；在某个迭代版本有个BS（安卓手游模拟器）大需求，从而在测试过程中就重复涉及到BS的安装卸载，当时TGP目录下有新包一个uninst_vm.bat批处理文件，双击就能卸载BS的所有相关目录（ps：BS的部分安装文件不在TGP目录下），用nopad++查看源码（无加密）：
+
+
+
+有点小吃惊，就这么一个卸载的脚本写了这么一大堆，但同时也勾起我想深入了解的兴趣，学习过程后面在讲，先来分析一下这个批处理
+
+@echo off
+
+setlocal
+
+set key_path="HKEY_LOCAL_MACHINE\SOFTWARE\BlueStacks_tc_dt"  将bs在注册表的路径赋给变量
+
+set value_name="InstallDir"  将值赋给变量
+
+set temp_file_name=uninst_vm_temp_2015_09_15
+
+set query_str=reg query %key_path% /v %value_name%  （reg query读取注册表的信息）
+
+set install_dir=""  变量为空
+
+for /F "delims=;"  %%j in ('%query_str%  2^>NUL') do (
+
+echo %%j > %temp_file_name%
+
+for /f "tokens=1,2*" %%x in ('findstr /i %value_name% %temp_file_name%') do (
+
+set install_dir=%%z
+
+)
+
+)   for循环里有嵌入一个for循环，主要是为了从注册表里获取bs的安装路径，这里不细说，但可以强调的是for循环是批处理的核心，弄得了for你也算是熟练了P，但不能说精通
+
+if exist "%temp_file_name%" del %temp_file_name% -判断是否存在这个文件，存在则删除
+
+if "%install_dir%" EQU """" goto :eof  --判断install_dir是否为空，空则结束goto :eof等同于exit
+
+setlocal ENABLEDELAYEDEXPANSION  --设置变量延迟，为何要用到下面会详细说明
+
+if "%install_dir%" EQU "" goto :eof     ---下面代码就不一一解释了大多用到的是if判断
+
+set install_dir=%install_dir:~0,-1%
+
+set errorlevel = 2
+
+set uninstaller_path=%install_dir%HD-DeployTool_Uninstaller.exe
+
+set temp_dir = "%install_dir%..\..\BlueStacks_tc_dt*"
+
+if exist "%uninstaller_path%"  (
+
+"%uninstaller_path%" -f
+
+if "%errorlevel%" EQU "0" (
+
+if exist "%uninstaller_path%"  (
+
+rmdir /s /q "%uninstaller_path%\..\..\..\BlueStacks_tc_dt"
+
+rmdir /s /q "%uninstaller_path%\..\..\..\BlueStacks_tc_dt1"
+
+rmdir /s /q "%uninstaller_path%\..\..\..\BlueStacks_tc_dt2"
+
+)
+
+)
+
+goto :eof
+
+)
+
+set uninstaller_path="%install_dir%..\uninstaller\HD-DeployTool_Uninstaller.exe"
+
+rem echo uninstaller_path=%uninstaller_path%
+
+%uninstaller_path% -f
+
+rem echo uninstaller exist code is %errorlevel%
+
+set uninstaller_path="%install_dir%.."
+
+rem echo uninstaller_path=%uninstaller_path%
+
+if "%errorlevel%" EQU "0" (
+
+if exist %uninstaller_path% rmdir /s /q %uninstaller_path%
+
+)
+
+goto:eof
+
+
+
+BS日志搜集
+ok，通过学习一篇完整教程，大致了解了上述每行代码的作用，其实简单来讲P就是一大堆dos命令拼凑在一起的脚本程序，所以windows上用到p的地方还是挺多，那么通过上述例子，学以致用：BS出现bug，经常要做的事情是，搜集bs的日子发给开发排查，在学习p之前，搜集的流程：
+
+1.先进入注册表找到BS的相关安装目录
+
+2.再进入BS安装目录后找到HD-logCollector.exe，双击运行
+
+3.再在桌面等待它在桌面生成日志
+
+4.再将日志以邮件形式发给印度那边的开发
+
+别看这简单的操作，每天都得重复10多遍相当繁琐，P是时候来拿来用用了
+
+搜集bs日志代码：
+
+@echo off
+
+set key_path="HKEY_LOCAL_MACHINE\SOFTWARE\BlueStacks_tc_dt"
+
+for /f "tokens=3" %%i in ('reg query %key_path% /v InstallDir') do set str=%%i
+
+set Hd-log_path=%str%HD-logCollector.exe
+
+%Hd-log_path% -d
+
+:a
+
+if exit "C:\Users\kai\Desktop\BlueStacks-Support.zip" goto b
+
+if not exit "C:\Users\kai\Desktop\BlueStacks-Support.zip" goto a
+
+在自己电脑上测试ok，拿去别人电脑上运行--抱错，什么鬼，排查发现：
+
+若路径中有空格，则会执行失败如：F:\Program Files\TGP\BlueStacks_tc_dt1\ProgramFiles\  Program Files中存在空格，得到的路径指是F;\Program
+
+问题出在tokens=3上，如果用tokens=3那么F:\Program后有空格，则第三段就只是F:\Program但加上tokens=3,4就能把路径显示出来了，但后面还有空格的话（也不能显示完整），那就tokens=2,*
+
+for /f "tokens=2,*" %%i in ('reg query %key_path% /v InstallDir') do (set str=%%j)
+
+ok,修改后玩别人电脑也能正常运行了，但后面又发现一个bug，那就是日志生成在桌面上，dos框内还在提示日志正在生成，我看了一下，电脑文件的后缀都是没有显示出来，难道是在这个原因，导致判断不了桌面上是否有BlueStacks-Support.zip，问题还得解决，想想用if桌面上的文件是否存在有点不可靠，那就来判断HD-logCollector.exe这个进程是否退出吧！这个进程退出，那么日志肯定是搜集完了，再次修改了一下
+
+@echo off
+
+set key_path="HKEY_LOCAL_MACHINE\SOFTWARE\BlueStacks_tc_dt"
+
+for /f "tokens=3" %%i in ('reg query %key_path% /v InstallDir') do set str=%%i
+
+set Hd-log_path=%str%HD-logCollector.exe
+
+%Hd-log_path% -d
+
+:a
+
+tasklist | find "HD-logCollector.exe" >nul && goto a
+
+echo 日志已生成
+
+说好的自动发送邮件呢？这个确实折腾了我半天，想用blat第三插件来实现，但真的
+
+很无语，没有发送成功，这个插件的作者也停止更新了，后面想用其它的方式来实现这个功能促使我学习python，这个不多说
+
+启用，断开网络
+   由于测试过程中经常要模拟网络断开的场景，每次都要去网络设置那禁用网络，十分不便，那就做个p吧，通过ipconfig /all来获取适配器名称，但也遇到个坑，网络禁用后，发现启用不了，再查看一下ipconfig /all 里面的内容全部变了，哎呀，这咋整，没有想到好的方法，只能用笨的方法，那就一开始名称写到一个文本里去，用完后在删除，下面是设计过程
+
+@echo off & setlocal enabledelayedexpansion
+
+for /f "tokens=2 delims=: " %%i in ('ipconfig /all ^| find /i "以太网适配器"')  do set "name=%%i"
+
+set /p var=(1禁用网络2启用网络)
+
+if /i "%var%"=="1"  (
+
+echo %name%>netsh.txt
+
+color 4f
+
+echo正在禁用网络..
+
+netsh interface set interface name="%name%" admin=disabled
+
+ping -n 3 127.0.1>nul
+
+echo网络已禁用，3S后退出命令框
+
+ping -n 4 127.0.1>nul
+
+exit
+
+)
+
+if /i "%var%"=="2"  (
+
+color 9f
+
+for /f "tokens=1,* delims= " %%i in (netsh.txt) do set name1=%%i
+
+echo正在启用网络..
+
+netsh interface set interface name="!name1!" admin=enabled
+
+ping -n 3 127.0.1>nul
+
+del /q /s netsh.txt
+
+echo网络已启用，3S后退出命令框
+
+ping -n 4 127.0.1>nul
+
+exit
+
+)
+
+pause
+
+其实根据for 和ipconfig拓展一下，也可以直接查看一些配置数据
+
+@echo off
+
+for /f "tokens=16" %%i in ('ipconfig /all ^| find /i "IPv4地址"') do set ipv4=%%i
+
+for /f "tokens=12" %%i in ('ipconfig /all ^| find /i "本地链接IPv6地址"') do set ipv6=%%i
+
+for /f "tokens=15" %%i in ('ipconfig /all ^| find /i "子网掩码"') do set mask=%%i
+
+for /f "tokens=15" %%i in ('ipconfig /all ^| find /i "默认网关"') do set gateway=%%i
+
+for /f "tokens=15" %%i in ('ipconfig /all ^| find /i "DNS服务器"') do set dns=%%i
+
+echo本机IPv4地址为：%ipv4%
+
+echo本机IPv6地址为：%ipv6%
+
+echo本机子网掩码为：%mask%
+
+echo本机默认网关为：%gateway%
+
+echo本机默认DNS服务器为：%dns%
+
+
+
+@echo off
+
+set /p m=请输入需查询的网页域名：
+
+nslookup %m%
+
+echo网页IP地址查询完成。
+
+
+其实上面几个p也只能说明你是个入门水平的p使用者，大牛们能用p写出魔塔这个游戏，但我觉得学了能马上用于实际工作中的东西就是最有用的。
+
+下面是我学习时记录在world文档里的笔记，其中一部分代码是网上大神所写的，留着自己做参考
+
+学习笔记
+
+
+@echo off & setlocal enabledelayedexpansion
+
+::设置变量延迟
+
+set /p k=按y系统将在10min中后关键，其它键取消
+
+if /i "%k%"=="y" (
+
+shutdown -s -t 5
+
+set /p m=按q可取消关机设置
+
+)
+
+if /i "%m%"=="q" (
+
+color 4d
+
+echo即将取消关机操作
+
+set/p=■
+
+::感觉上面这个多此一举，不知道为什么要加上去
+
+for /L %%i in (1 1 10)do set /p a=■nul
+
+echo 100%%
+
+shutdown -a
+
+echo即将关闭DOS窗口 感谢使用
+
+ping 127.0.1 -n 5 >nul
+
+goto :eof
+
+)
+
+if /i not "%m%"=="q" goto hh
+
+if /i not "%k%"=="y" goto hh
+
+:hh
+
+set /p j=按6可进入..
+
+if /i "%j%"=="6" goto gg
+
+if /i not "%j%"=="6" (
+
+echo 88命令框即将退出
+
+ping 127.0.1 -n 5 >nul
+
+goto :eof
+
+:gg
+
+：：下面代码写法很有问题，颜色跳动过快
+
+for /L %%a in (3,-1,0) do (
+
+echo还剩余%%aS
+
+color 9c
+
+ping 127.0.1 -n 2 >nul
+
+color 6e
+
+ping 127.0.1 -n 1 >nul
+
+color 5d
+
+cls
+
+)
+
+：：下面写法可完美规避。
+
+for /L %%a in (3,-1,0) do (
+
+echo还剩余%%aS
+
+set var=%%a
+
+if /i "!var!"=="3" color 4f
+
+if /i "!var!"=="2" color 5f
+
+if /i "!var!"=="1" color 9f
+
+if /i "!var!"=="0" color 0f
+
+ping /n  2 127.0.0.1>nul
+
+cls
+
+)
+
+pause
+
+echo loding.........
+
+ping 127.0.1 -n 5 >nul
+
+for /f %%i in (1.txt)do (start "" "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" "%%i"
+
+::1.TXT从这个文件里调用数据
+
+goto :eof
+
+)
+
+pause
+
+::::::::::::::::::::::::::::::::::::::find::findstr::::::::::::::::::::::::::::
+
+::find作用：从文件中收索字符串
+
+::格式：find参数"字符串"路径\文件名
+
+::参数：/V显示所有未包含指定字符串的行。
+
+::/C仅显示包含字符串的行数。
+
+::/N显示行号。
+
+::/I搜索字符串时忽略大小写。
+
+::/OFF[LINE]不要跳过具有脱机属性集的文件。当文件中包含要查找的字符串时，将返回这个字符串所在位置的整行内容
+
+::
+
+::格式：findstr参数 字符串 路径\文件
+
+::参数：/B在一行的开始配对模式。(就是指以字符串开头，begin这样就方便了记忆)
+
+::/E在一行的结尾配对模式。（就是指以字符串结尾，end这样就方便记忆）
+
+::/L按字使用搜索字符串。就是将后面的""里的当成一个字符
+
+::/R将搜索字符串作为一般表达式使用。
+
+::/S在当前目录和所有子目录中搜索匹配文件。
+
+::/I指定搜索不分大小写。（英文：ignore忽略）
+
+::
+
+::::::::::::::::::::查找指定文件的指定内容:::::::::::::::::::::::::::::::::::
+
+::@echo off
+
+::for /f "tokens=1,*"  %%a in ('findstr /i "" "C:\Users\kai\TGP\mmog_data.xml"') do (
+
+::echo %%a
+
+::)
+
+::pause
+
+::
+
+::：：：：：：：：：：：：：：：：：华丽的分割线：：：：：：：：：：：：：：：：：：：：：
+
+::
+
+::
+
+::@echo off
+
+::set /p m=(1禁用网络2启用网络)
+
+::if /i "%m%"=="1"  (                              ==是双等于号；；别忘了
+
+::color 4f
+
+::echo正在禁用网络..
+
+::netsh interface set interface name="Local Area Connection" admin=disabled
+
+::ping -n 3 127.0.1>nul
+
+::echo网络已禁用，3S后退出命令框
+
+::ping -n 4 127.0.1>nul
+
+::exit
+
+::)
+
+::if /i "%m%"=="2"  (
+
+::color 9f
+
+::echo正在启用网络..
+
+::netsh interface set interface name="Local Area Connection" admin=enabled
+
+::ping -n 3 127.0.1>nul
+
+::echo网络已启用，3S后退出命令框
+
+::ping -n 4 127.0.1>nul
+
+::exit
+
+::)
+
+::pause
+
+::
+
+::上面写法有很多局限性
+
+：：
+
+：：下面是我自己整理的：核心知识，变量延迟，批处理是一行（一条命令，一条命令往下执行！！！！！！）
+
+@echo off & setlocal enabledelayedexpansion
+
+for /f "tokens=2 delims=: " %%i in ('ipconfig /all ^| find /i "以太网适配器"')  do set "name=%%i"
+
+set /p var=(1禁用网络2启用网络)
+
+if /i "%var%"=="1"  (
+
+echo %name%>netsh.txt
+
+color 4f
+
+echo正在禁用网络..
+
+netsh interface set interface name="%name%" admin=disabled
+
+ping -n 3 127.0.1>nul
+
+echo网络已禁用，3S后退出命令框
+
+ping -n 4 127.0.1>nul
+
+exit
+
+)
+
+if /i "%var%"=="2"  (
+
+color 9f
+
+for /f "tokens=1,* delims= " %%i in (netsh.txt) do set name1=%%i
+
+echo正在启用网络..
+
+netsh interface set interface name="!name1!" admin=enabled
+
+ping -n 3 127.0.1>nul
+
+del /q /s netsh.txt
+
+echo网络已启用，3S后退出命令框
+
+ping -n 4 127.0.1>nul
+
+exit
+
+)
+
+pause
+
+::::::::::::::::::::::::::::::::::::::获取本地连接的名称:::::::::
+
+::::::::::::::::::::::::::::
+
+::@echo off
+
+::for /f "tokens=2*" %%a in ('ipconfig^|findstr "以太网适配器"') do set "ipname=%%b"解释一下为什么用%%b %%b代表的是第二部分数据
+
+::for /f "tokens=1* delims=:" %%i in ("%ipname%") do echo %%i(delims=:空格不能少)，如果不加delims则默认为空格，如果加上delims，则不会默认空格
+
+::pause>nul
+
+::
+
+::
+
+::::::::::::::::::::::::::::::::::::::例子::::::::::::::::::::::::
+
+::为什么本地连接IPV6地址 是tokens=12查看一下就很明了本地链接  （IPv6地址. . . . . . . . : fe80::49d9:9c17:93dd:7379%6(首选)）地址.这个是看做一段的，因为没有空格，delims没有的话，默认就是空格分段！！
+
+::@echo off
+
+::for /f "tokens=16" %%i in ('ipconfig /all ^| find /i "IPv4地址"') do set ipv4=%%i
+
+::for /f "tokens=12" %%i in ('ipconfig /all ^| find /i "本地链接IPv6地址"') do set ipv6=%%i
+
+::for /f "tokens=15" %%i in ('ipconfig /all ^| find /i "子网掩码"') do set mask=%%i
+
+::for /f "tokens=15" %%i in ('ipconfig /all ^| find /i "默认网关"') do set gateway=%%i
+
+::for /f "tokens=15" %%i in ('ipconfig /all ^| find /i "DNS服务器"') do set dns=%%i
+
+::echo本机IPv4地址为：%ipv4%
+
+::echo本机IPv6地址为：%ipv6%
+
+::echo本机子网掩码为：%mask%
+
+::echo本机默认网关为：%gateway%
+
+::echo本机默认DNS服务器为：%dns%
+
+::
+
+::
+
+::@echo off
+
+::set /p m=请输入需查询的网页域名：
+
+::nslookup %m%
+
+::echo网页IP地址查询完成。
+
+:::::::::::::::::::::::::::::查mac地址:::::::::::::::::::::::::
+
+::@echo off
+
+::getmac
+
+::echo MAC地址查询完成。
+
+::goto exit1
+
+::
+
+::
+
+::
+
+::  ~I         -删除任何引号(")，扩充%I
+
+::     %~fI        -将%I扩充到一个完全合格的路径名
+
+::     %~dI        -仅将%I扩充到一个驱动器号
+
+::     %~pI        -仅将%I扩充到一个路径
+
+::    %~nI        -仅将%I扩充到一个文件名
+
+::     %~xI        -仅将%I扩充到一个文件扩展名
+
+::     %~sI        -扩充的路径只含有短名
+
+::     %~aI        -将%I扩充到文件的文件属性
+
+::     %~tI        -将%I扩充到文件的日期/时间
+
+::     %~zI        -将%I扩充到文件的大小
+
+::    %~$PATH:I   -查找列在路径环境变量的目录，并将%I扩充
+
+::到找到的第一个完全合格的名称。如果环境变量名
+
+::未被定义，或者没有找到文件，此组合键会扩充到
+
+::空字符串
+
+::
+
+::可以组合修饰符来得到多重结果:
+
+::
+
+::     %~dpI       -仅将%I扩充到一个驱动器号和路径
+
+::     %~nxI       -仅将%I扩充到一个文件名和扩展名
+
+::     %~fsI       -仅将%I扩充到一个带有短名的完整路径名
+
+::     %~dp$PATH:i -查找列在路径环境变量的目录，并将%I扩充
+
+::到找到的第一个驱动器号和路径。
+
+::     %~ftzaI     -将%I扩充到类似输出线路的DIR
+
+::差别是 比如%cd%是C：\test
+
+::那么%~dp0就是C：\test\
+
+::多一个\
+
+::
+
+看下面的例子，在“%0”参数变量上进行扩展：
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10
+
+11
+
+12@echooff
+
+echo正在运行的这个批处理：
+
+echo完全路径：%0
+
+echo去掉引号：%~0
+
+echo所在分区：%~d0
+
+echo所处路径：%~p0
+
+echo文件名：%~n0
+
+echo扩展名：%~x0
+
+echo文件属性：%~a0
+
+echo修改时间：%~t0
+
+echo文件大小：%~z0
+
+pause
+
+保存为批处理文件并执行既可以看到不同的效果。
+
+正在运行的这个批处理：
+
+完全路径："C:\Users\kai\Desktop\批处理自动化\test.bat"
+
+去掉引号：C:\Users\kai\Desktop\批处理自动化\test.bat
+
+所在分区：C:
+
+所处路径：\Users\kai\Desktop\批处理自动化\
+
+文件名：test
+
+扩展名：.bat
+
+文件属性：--a--------
+
+修改时间：2016/04/10 14:18
+
+文件大小：227
+
+其实，变量的扩展不仅用于“%0”参数，还可以应用到所有的变量上，包括“for”循环语句中的临时变量，但是大多数情况下用在“for”循环的临时变量上。经过测试这种单字符变量扩展的方式只能用于临时变量或参数变量的扩展上。
+
+::@echo off
+
+::for /f "delims=" %%i in ("%cd%") do set folder=%%~ni
+
+::echo %folder%
+
+::pause
+
+::
+
+::
+
+::
+
+::
+
+:::::::::::::::::::::::::::::::::::dir::::::::::::::::::::::
+
+::::
+
+::DIR [drive:][path][filename] [/A[[:]attributes]] [/B] [/C] [/D] [/L] [/N]
+
+:: [/O[[:]sortorder]] [/P] [/Q] [/R] [/S] [/T[[:]timefield]] [/W] [/X] [/4]
+
+::  [drive:][path][filename]
+
+::指定要列出的驱动器、目录和/或文件。
+
+::  /A显示具有指定属性的文件。
+
+::属性D目录R只读文件
+
+::               H隐藏文件A准备存档的文件
+
+::               S系统文件I无内容索引文件
+
+::               L解析点-表示“否”的前缀
+
+::  /B使用空格式(没有标题信息或摘要)。
+
+::  /C在文件大小中显示千位数分隔符。这是默认值。用/-C来
+
+::禁用分隔符显示。
+
+::  /D跟宽式相同，但文件是按栏分类列出的。
+
+::  /L用小写。
+
+::  /N新的长列表格式，其中文件名在最右边。
+
+::  /O用分类顺序列出文件。
+
+::排列顺序N按名称(字母顺序)     S按大小(从小到大)
+
+::               E按扩展名(字母顺序)   D按日期/时间(从先到后)
+
+::               G组目录优先-反转顺序的前缀
+
+::
+
+::
+
+::：：：：：：：：：：：：：：：：：：华丽的分割线：：：：：：：：：：：：：：：：：：：
+
+::
+
+::
+
+::@echo off
+
+::if "%1" == "h" goto begin
+
+::mshta vbscript:createobject("wscript.shell").run("""%~nx0"" h",0)(window.close)&&exit
+
+:::begin
+
+::上面是程序静默运行代码（不过会有缺陷，会闪烁一下），为了解决这个问题只能用到vbs了
+
+：：将下面的代码保存为.vbs文件，把test.bat改成你的批处理文件，然后运行.vbs文件
+
+：：set GuWS=WScript.CreateObject("WScript.Shell")
+
+：：GuWS.Run "test.bat",vbhid
+
+：：
+
+：：
+
+::for %%i in ( d h g ) do (
+
+::xcopy /c /s %%i:\*.txt  h:\kk\    /c即使有报错也继续运行/s复制目录和子目录， 不包括空目录  把dhg盘下含txt的文件和文件夹全部拷入h：下的kk文件夹内
+
+::)还要特别注意的一点是xcopy /c /s %%i:\ff  h:\kk\     ff是文件夹名称，不能这样谢，只能ff/*
+
+::
+
+::
+
+:::::::::::::::::::::::::：：：：：：：：华丽的分割线：：：：：：：：：：：：：：：：：：：：
+
+::
+
+::rd /s /q c:tjj结果时直接删除tjj这个文件夹/q为静默删除 不需要确认
+
+::md c:\文件夹名   创建一个新的文件夹
+
+::del /s /q  c:\文件夹名     只能删除文件，但不能删除文件夹
+
+::Del /F /A /Q \\?\%1
+
+::RD /S /Q \\?\%1
+
+::解释：del"是删除一个或数个文件,"/F"是强制删只读文件,"/A"是根据属性选择需要删除的文件，"/Q"是删除全局通配字符时无需确认,就是所谓的安静模式:
+
+::RD的作用是删一个目录或文件夹,"S"是除目录本身外，还将同时删除指定目录下的所有子目录和文件，"/Q"是安静模式
+
+::创建好bat，被占用的文件拖到bat图标上就能直接删除了
+
+::
+
+::：：：：：：：：：：：：华丽的分割线：：：：：：：：：：：：：：：：：：：：：：：：：：：：：：：：
+
+::
+
+::taskkill /f /im notepad.exe /im qq.exe强制杀死某个进程（可杀死多个进程）/f强制杀掉进程/im进程映像名
+
+：：tasklist | find "进程名" >nul || start "" "A.bat"该工具显示在本地或远程机器上当前运行的进程列表。
+
+::
+
+::
+
+::：：：：：：：：：：：：：：：：：：：：：：：：：：：华丽的分割线：：：：：：：：：：：：：：：：：：：：
+
+::set用法
+
+::1.字符串替换  语法：%path:str1=str2%将%path%中字符串str1全部替换为str2
+
+::举个栗子
+
+::@echo off
+
+::set a=bbs.vreybat.cn
+
+::echo呼唤前的值:"%a%"
+
+::set var=%a:.=日你哥%
+
+::echo替换后的值:"%var%"
+
+::pasue
+
+::执行结果为bbs日你哥verybat日你哥cn
+
+::set /p var=.....(这个不是变量值)  /p就是提供一个交互界面,让用户自己输入
+
+::
+
+::set "d=%a%"这种写法想到给个转义字符！
+
+::
+
+::
+
+::
+
+::2.字符串截取  语法%a:~m,n%  ~可以理解为“偏移”m为偏移量（不写则为0），n为截取长度（省略为全部）
+
+::举个栗子
+
+::@echo off
+
+::set a=bbs.verybat.cn
+
+::set var=%a:~1,2%
+
+::echo %var%
+
+::pause
+
+::执行结果bs这是为什么呢？偏移=1也就说重第一个b开始，显示数量=2就b后面显示2个字符串   那么执行结果就是bs
+
+::
+
+::
+
+::::@echo off
+
+::set a=bbs.verybat.cn
+
+::set var=%a:~-3%
+
+::echo %var%
+
+::pause
+
+::执行结果为.cn这个举一反三的例子我就不需要再强调这么多，不懂面壁去
+
+::
+
+::
+
+::：：：：：：：：：：：：：：：：华丽的分割线：：：：：：：：：：：：：：：
+
+::
+
+::
+
+::把bat用注册表的方法加入启动项
+
+::reg add HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v runbat /t REG_SZ /d f:\a.bat /f
+
+::这里再补充一下nul的用法
+
+::
+
+::>nul屏蔽命令的输出内容
+
+::2>nul疲敝错误内容
+
+::1>nul禁止输出正确信息
+
+::
+
+::::::::::::::::::::::::::::::::::::::清ie缓存：：：：：：：：：：：：：：：：：：：：：
+
+::  RunDll32.exe InetCpl.cpl,ClearMyTracksByProcess 8
+
+::清除Cookies
+
+::  RunDll32.exe InetCpl.cpl,ClearMyTracksByProcess 2
+
+::清除历史记录
+
+::  RunDll32.exe InetCpl.cpl,ClearMyTracksByProcess 1
+
+::清除表单数据
+
+::  RunDll32.exe InetCpl.cpl,ClearMyTracksByProcess 16
+
+::清除密码
+
+::    RunDll32.exe InetCpl.cpl,ClearMyTracksByProcess 255
+
+::清除上述全部项目
+
+::  RunDll32.exe InetCpl.cpl,ClearMyTracksByProcess 4351
+
+::清除上述全部项目，以及IE7中使用的加载项所保存的各种数据
+
+::
+
+::
+
+:::::::::::::::::::::::::::::::::::::::::::::for语句里用屏蔽：：：：：：：：：：：
+
+::网友举例
+
+::如果copy一个不存在的文件aaa.test，用copy c:\aaa.test d:\sddd 1>nul 2>nul就可以屏蔽掉运行的错误结果“找不到文件”，你将看不到任何报错.
+
+::可是一旦把相同的命令运用到FOR语句中就不好使了，比如：
+
+::for /f %i in ('dir c:\*.txt /b') do copy c:\%i d:\sddd_%i 1>nul 2>nul
+
+::结果总是会报错说“找不到文件”。
+
+::偶想问大虾们怎样才能在FOR句中也屏蔽掉错误呢？？？
+
+::下面写法可以完美规避
+
+::for /f %%i in ('dir c:\*.txt /b  2^>nul') do copy c:\%%i d:\sddd_%%i 2>nul 1>nul
+
+::
+
+::
+
+::
+
+::：：：：：：：：：：：：：：：：华丽的分割线：：：：：：：：：：：：：：：：：：
+
+::批处理比较数值大小lss equ gtr的用法
+
+::举个路子
+
+::@echo?off?
+
+::set?/p?第一个数=请输入第一个数?set?/p?第二个数=请输入第二个数?
+
+::if?%第二个数%?lss?%第一个数%?goto?hero?
+
+::if?%第二个数%?equ?%第一个数%?goto?her?
+
+::if?%第二个数%?gtr?%第一个数%?goto?he?
+
+::
+
+::
+
+::：：：：：：：：：：：：变量延迟::::::::::::::::::::::::::::::::::
+
+::举个栗子
+
+::@echo off
+
+::setlocal enabledelayedexpansion
+
+::echo ^^!
+
+::pause
+
+::因为启用了变量延迟  所以输出结果为！   没有启用变量延迟输出^!
+
+::变量延迟一般在复合语句中用的比较多
+
+::@echo off
+
+::for /l %%i in (1 1 10) do (
+
+::    set var=%%i
+
+::    echo %var%
+
+::)
+
+::pause
+
+::运行上面的代码，显示什么？显示10个echo处于关闭状态。
+
+::按照逻辑，var的值应该依次是1、2、3........10才对啊！
+
+::这就是因为没有开启 延迟变量的缘故，cmd把var的值当作复合语句之前的值来引用,复合语句：一对括号里( )的所有命令是复合语句；通过管道命令&、&&、|、||连接起来的命令也是复合语句。，
+
+::而在本例中，复合语句之前并没有给var定义，所以var的值是空的，所以会显示10个echo处于关
+
+::通俗来说 就是批处理他妈的指认行，不认命令数量 （）里的命令只当做一行来处理  所以
+
+::echo %var%用到的是var这个根本没定义过的变量    懂？？   这都不懂你就没必要往下看了
+
+::使用了“setlocal enabledelayedexpansion”后，如果在复合语 句之外引用变量，则使用%var%或!var!都是可以的。
+
+::若想在复合 语句中引用复合语句即时得到的变量，则必须使用!var!。
+
+::如果在复合 语句中还是使用%var%变量，那么得到的变量将是复合语句之前var的值，
+
+::此时如果var在复合语句之前没有定义，那么值为空值
+
+::
+
+:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+::
+
+::比如set /p=wind
+
+::>nul是屏蔽命令的输出内容
+
+::比如pause >nul
+
+::还有一个2>nul
+
+::也是屏蔽的作用，不过是屏蔽错误的内容
+
+::比如
+
+::del wind 2>nul
+
+::就算没有wind文件，也不会有提示
+
+::
+
+::
+
+::管道命令用法
+
+&连接符，命令格式[...] command1 & command2用来分隔一个命令行中的多个命令。Cmd.exe运行第一个命令，然后运行第二个命令。
+
+如：
+
+@echo第一个命令&@echo第二个命令
+
+&&代表上一句执行成功,命令格式[...] command1 && command2只有在符号&&前面的命令成功时，才用于运行该符号后面的命令。Cmd.exe
+
+运行第一个命令，然后只有在第一个命令运行成功时才运行第二个命令。
+
+如：
+
+@echo测试>>测试.txt&&@echo *********测试.txt写入成功********
+
+||代表上一句执行失败,命令格式[...] command1 || command2只有在符号||前面的命令失败时，才用于运行符号||后面的命令。
+
+Cmd.exe运行第一个命令，然后只有在第一个命令未能运行
+
+如：
+
+dir *.pdf||echo *************没有找到pdf文件**************
+
+|管道符，这个命令的作用不一样了，就是让前一命令的输出当做后一命令的输入,就是说前面命令的结果当做一个参数传递给后面命令处理
+
+如：
+
+help|more
+
+::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+::@echo off
+
+::title圆周率计算程序
+
+::echo按任意键开始计算& pause>nul这个设计的不错，可以按任意键进行下一步（做个个暂停处理）
+
+::echo计算进行中，进度请看标题栏...
+
+::set i=0
+
+:::loop
+
+::if %i% lss 10000 (
+
+::set /a i+=1
+
+::title圆周率计算程序   当前计算到第%i%位
+
+::这里是为了更明显点看到显示的效果，所以添加一个时间延迟。
+
+::ping /n 1 127.1>nul
+
+::goto :loop
+
+::)
+
+::Pause
+
+::
+
+::
+
+:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+::mod设置cmd的窗口大小
+
+::语法格式：mode con cols=113 lines=15    113列宽15列是高
+
+::
+
+::
+
+::::::::::::::::::::简单阐述一下goto和call的区别::::::::::::::::
+
+::1、书写格式，goto后面的标签前可以有冒号也可以没有冒号，call后面标签前必须要有冒号。
+
+::2、goto跳转到目标程序段后，就顺序执行下去，直到程序执行 完毕。call跳转到目标程序段后，会将目标程序执行完，然后回到call原来的地方，然后继续执行下去。
+
+::我们在同一个文件夹下，有a.bat和b.bat两个批处理文件，
+
+::a.bat里面的代码为：
+
+::@echo off
+
+::set /p var=请选择(Y/N):
+
+::if /i "%var%"=="Y" call b.bat
+
+::echo a.bat执行完毕。
+
+::pause >nul
+
+::b.bat里面的代码为：
+
+::@echo off
+
+::echo Hello World!
+
+::start explorer.exe
+
+::echo b.bat执行完毕。
+
+::pause >nul
+
+::我们双击执行a.bat，执行结果如下 请选择(Y/N):Y Hello World! b.bat执行完毕。a.bat执行完毕。
+
+::并且，计算机实在打开explorer后才显示a.bat执行完毕的。
+
+::@echo off
+
+::set var=123
+
+::call :loop
+
+::pause>nul & goto :eof
+
+:::loop
+
+::set /a var+=1
+
+::echo var=%var%
+
+::pause>nul
+
+::假如上面程序没有goto :eof退出语句，那么程序会显示两次数据，
+
+::一次是124，一次是125
+
+::
+
+::call带参数的情况
+
+::例一
+
+::@echo off
+
+::call :an hello世界！
+
+:::an
+
+::echo %1
+
+::echo %2
+
+::pause>nul
+
+::输出为：
+
+::hello
+
+::世界！           （%1表示第一个参数，%2表示第二个参数）
+
+::注意的是  主程序里，不可用%1~%9的形式调用子程序参数
+
+::
+
+::@echo off
+
+::set sum=0
+
+::call :sub sum 10 20 35
+
+::echo数据求和结果: %sum%
+
+::pause>nul
+
+::goto :eof :sub
+
+::set /a %1=%1+%2
+
+::shift /2
+
+::if not "%2"=="" goto sub
+
+::程序输出为65。
+
+::解释一下shtift /2该命令是从第n个参数开始移位，n介于0~8之间
+
+::shift /2会将%3移动到%2，将%4移位到%3，但并不影响%0和%1.
+
+::另外注意的是set命令不允许set /a %1=%2+%3这种将数值直接赋值到参数的计算（set /a 3=4+5同样不允许）
+
+::::::::::::::::::::start::::::::::::::::::::::::::::
+
+::
+
+::@echo off
+
+::start D:\Tencent\QQ\Bin\QQ.exe
+
+::start C:\批处理教程.txt
+
+::::打开E盘
+
+::start E:
+
+::exit
+
+::上面程序会按顺序依次执行打开腾讯软件-->打开《批处理教程》-->打开E盘，完成后批处理文件自动自我关闭。
+
+::注：由于DOS命令对于调用外部程序的优先级别不同，.exe可以省 略，但.txt就不能省略了。
+
+::这里提倡不要区分要不要写，统一将后 全写上的良好风格，确保程序万无一失
+
+::
+
+::
+
+::
+
+:::::::::::::::::::::::::::::::::errorlevel::::::::::::::::::::::::::::::::::::::::::
+
+::if errorlevel这个句子必须放在某一个命令后面，执行完该命令后才有它判断命令的返回值
+
+::很多人认为errorlevel里，成功用0表示，失败用1表示，实际上，errorlevel的值可以是0~255中的任意一个数值。看下面的例子就明 白了（假如我们的计算机没有Z盘）：
+
+::程序例子：
+
+::@echo off
+
+::dir c:
+
+::if errorlevel 1 goto 1
+
+::if errorlevel 0 goto 0
+
+::exit :0
+
+::echo命令执行成功！
+
+::goto exit
+
+:::1
+
+::echo命令执行失败！
+
+::goto exit
+
+:::exit
+
+::pause
+
+::但如果dir Z：根本就没有z盘 那么上述代码显示情况全为成功，  就就是为什么不能一定说返回值为1就是失败的原因了
+
+::
+
+::
+
+::
+
+:::::::::::::::::::::::::::::::if:::::::::::::::::::
+
+::使用if else else必须和if在同一行
+
+::@echo off
+
+::set /p word=请输入一个字母：word后面不能有空格 否则会赋值失败
+
+::if /i "%word%" == "a" (echo a) else (
+
+::if /i "%word%" == "b" (echo b) else echo not A an not B
+
+::)
+
+::pause
+
+::注意：else后面一定要跟一个左括号，提示程序后面内容是包含在else里面的，否则左括号放到下一行程序头，程序就出错了
+
+::注意，if的条件后面一定要紧跟一个空格！
+
+::if 2 neq 3(
+
+:: echo Hello!
+
+:: echo world!
+
+:: )
+
+::if 2 neq 3 (
+
+:: echo Hello!
+
+:: echo world!
+
+::)
+
+::这是两种写法，初学者一粗心就写成上面写法，
+
+::在条件2 neq 3后面 没有空格，导致程序语法错误，
+
+::而且因为是括号的缘故，还愣是查不 出原因！第二种写法才正确，切记切记
+
+::
+
+::
+
+::::::::::::::::::::::::::%random%获取随机数::::::::::::::::
+
+::
+
+::@echo off
+
+::setlocal enabledelayedexpansion
+
+::for /l %%i in (1,1,10) do echo !random!
+
+::pause
+
+::因为用了变量延迟，所以可以获取是个不同的随机数
+
+::假如我们要产生指定区间的随机数，可以用这种格式：%random%%%(max-min+1)+min产生[min,max]区间里的随机数，
+
+::注：批处理中求模得用两个%%符 号
+
+::程序例子，获得1到10之间的随机数字：
+
+::@echo off
+
+::set /a num=%random%%%10+1
+
+::echo %num%
+
+::pause
+
+::在这里，表达式%random%的%符号不再是可有可无的了
+
+::@REM产生10个[4,12]间的随机数
+
+::@echo off
+
+::REM启用延迟环境变量扩展
+
+::setlocal enabledelayedexpansion
+
+::REM设置随机数的最小和最大值以及求模用的变量
+
+::set min=4
+
+::set max=12
+
+::set /a mod=!max!-!min!+1
+
+::for /l %%i in (1,1,10) do (
+
+::REM产生[min,max]之间的随机数
+
+::set /a r=!random!%%!mod!+!min!
+
+::echo.
+
+::echo随机数%%i：!r!
+
+::)
+
+::pause>nul
+
+::
+
+::上面的例子老夫又简便了一下
+
+::@echo off
+
+::setlocal enabledelayedexpansion
+
+::for /l %%i in (1,1,4) do (
+
+::set /a r=!random!%%10+1
+
+::echo.
+
+::echo随机数%%i：!r!
+
+::)
+
+::pause
+
+::
+
+::上面输出结果的显示方式不是很好，一行只输出一个指，想要把这些数全显示在同一行，我又加工了一下代码
+
+@echo off
+
+setlocal enabledelayedexpansion
+
+echo红色球号码是：
+
+for /l %%i in (1,1,6) do (
+
+set /a r=!random!%%36+1
+
+set /p =!r!nul
+
+)
+
+echo .
+
+echo蓝色球号码是：
+
+set /a b=%random%%%36+1
+
+ping /n 2 127.0.0.1>nul & set /p =!b!
+
+pause>nul
+
+::这个set /p =提示语
+
+::
+
+::::::::::::::::实时显示时间：：：：：：：：：：：：：：：：：：：：：：：：：：：：：
+
+::@echo off
+
+::time取出时间值，-3表示不显示后三位字符。这个格式只显示时间的时、分、秒。
+
+::echo %time:~0,-3%
+
+::ping -n 2 127.1>nul&cls&%0
+
+::pause
+
+::
+
+::
+
+::
+
+:::::::::::::::::::::::::::for:::::::::::::::::::::
+
+::标准格式FOR [-d | -l | -r | -f] %%variable IN (set) DO command [command-parameters]
+
+::for也可以没有任何开关for %%i in (*) do echo %%i这条命令的变量%%i取值*，而不是取具体值，那么这里就有特殊的 含义：表示显示当前目录下，所有非文件夹的文件名字。 （包 括.rar  .jpg  .exe  .bat  .sys等等所有非文件夹）
+
+::for /d %%variable in (set) do command [command-parameters]搜索set（可以包含通配符*和?）里的文件夹后执行指定的Command。用于目录搜索，不会搜索文件。
+
+::通配符*和？的区别：*表示任意n个字符，用一个*符号就够了。而？表示任意一个字符， 需要表达“不多于k个字符的文件夹”，就写上k个？，任意多个中 文都算0个字符。
+
+::例如：???三个问号，不仅仅代表有三个字母的文件夹，还包括一个 字母的文件夹和两个字母的文件夹，所有这些都会被搜索出来。
+
+::*********注意/d只能显示文件夹名字，不能显示文件名字
+
+::@echo off
+
+::for /d %%i in (C:\"program files"*) do echo %%i
+
+::pause
+
+::运行结果将C:\program files里面的所有文件夹都显示出来了。
+
+::注意， 因为“program files”含有空格，所以必须用双引号，否则出错。
+
+::总的来说/d的语句是没个卵用的,但为了是菜鸟们都能学习到，就啰嗦了一下
+
+::
+
+::下面讲解一下/r可以把当前或者你指定路径下的文件名字全部读取，注意是文件名 字。
+
+::语法::FOR /R [[drive:]path] %%variable IN (set) DO command [command-parameters]
+
+::@echo off
+
+::for /r c:\ %%i in (*.exe) do echo %%i
+
+::pause
+
+::把c盘下的exe文件都列出来了
+
+::
+
+::/L
+
+::语法FOR /L %%variable IN (start,step,end) DO command [command-parameters]
+
+::注意：在循环里，我们不可以改变循环变量的值
+
+::举个错误的例子帮助菜鸟们理解一下
+
+::@echo off
+
+::setlocal enabledelayedexpansion
+
+::for /l %%i in (1,1,10) do (
+
+::                           set %%i+=10
+
+::                          echo %%i
+
+:: )
+
+::pause
+
+::上面程序执行出错
+
+::
+
+::
+
+::/F
+
+::FOR /F ["options"] %%variable IN (file-set) DO command [command-parameters]
+
+::文件名file-set不用引号（如果文件名含有空格时，就需要借助usebackq了）
+
+::FOR /F ["options"] %%variable IN ("string") DO command [command-parameters]
+
+::字符串string要用双引号
+
+::FOR /F ["options"] %%variable IN ('command') DO command [command-parameters]
+
+::命令command要用单引号
+
+::注意：带引号的字符串"options"包括一个或多个指定不同解析选项 的关键字：eol=c、skip=n、delims=xxx、tokens=x,y,m-n、usebackq。
+
+::eol=c忽略所有以C开头的行
+
+::@echo off
+
+::for /f "eol=举" %%i in (D:\静夜思.txt) do echo %%i
+
+::pause >nul
+
+::输出结果为::
+
+::床前明月光，
+
+::疑是地上霜；
+
+::低头思故乡
+
+::
+
+::要注意的是eol=call格式不能屏蔽以空格开头的行，想屏蔽空格可以"eol="就行了
+
+::
+
+::skip=n忽略前N行的内容（N不能等于），必须大于0）
+
+::
+
+:::delims=XXX（XXX是背定义的符号，该符号在文本中存在，将作为分隔符）
+
+::FOR /F "Delims=符号" %%I   IN (Command1)   DO Command2
+
+::"delims=",没指明什么符号作为分隔符，那么程序将认为文本没有分隔符，所有内容都会被显示
+
+::对usebackq总结：usebackq可以认为仅仅用于当路径或文件名有空格时的情况。
+
+::格式：for /f  "usebackq" %%i ("C:\program files\temp.txt") do echo %%i
+
+::计算机会认为“C:\program files\temp.txt”是一个文 件的完整路径，对该路径的文件进行操作。
+
+::以后都加上这个"delims="上面代码里，有一个"delims="，它的作用是即使文本包含空格，也 可以显示所有内容
+
+::
+
+::
+
+::
+
+::
+
+::
+
+::for实际运用样例（/f的使用不列出来）：
+
+::for %%i in (*) do echo %%i
+
+::显示当前目录下，所有非文件夹的文件名字。（包 括.rar .jpg .exe .bat .sys等等所有非文件夹）
+
+::for %%i in (*.*) do echo %%i
+
+::搜索当前目录下的所有文件。
+
+::for /d %%i in (*) do echo %%i
+
+::搜索当前路径下所有文件夹的名字。
+
+::for /d %%i in (C:\abc\"ef gh"*) do echo %%i
+
+::搜索C盘abc文件夹里ef gh文件夹里面的所有文件的名字。
+
+::for /d %%i in (C:\"program files"\????) do echo %%i
+
+::搜索C盘program files文件夹里，文件夹名字为1~4个字符的所有文件夹。
+
+::for /d %%i in (win??????????) do @echo %%i
+
+::搜索当前路径下以win开头，后面名字不多于10个字符的所有文件夹。
+
+::for /d %%i in (C:\"program files"\win*) do echo %%i
+
+::搜索C:\program files文件夹里，所有以win开头的文件夹。
+
+::for /d  %%i in (C:\windows\w???) do echo %%i
+
+::搜索C:\windows所有以w开头，名字不超过4个字符的文件夹。
+
+::for /d  %%i in (C:\windows\wbem) do echo %%i
+
+::这种搜索就没多大意义了，计算机在C:\windows搜索到wbem就显 示：C:\windows\wbem，否则不显示。
+
+::for /r c:\ %%i in (*.exe) do echo %%i
+
+::搜索C盘下包括子目录的所有exe文件。
+
+::for /r %%i in (*.txt) do @echo %%i
+
+::搜索当前路径目录树（当前脚本所处的路径）的所有txt文件。
+
+::for /r C:\"program files" %%i in (????.txt) do echo %%i
+
+::搜索C:\program files目录树的所有名字不多于4个字符的txt文件。
+
+::for /r C:\windows %%i in (*) do echo %%i
+
+::搜索C:\windows目录树的所有文件。
+
+::for /r C:\"program files" %%i in (*.???) do echo %%i
+
+::搜索C:\program files目录树下所有扩展名不超过3个字符的所有文件。
+
+::for /r C:\windows %%i in (???.??) do echo %%i
+
+::搜索C:\windows目录树下所有文件名不超过3个字符并且扩展名不 超过2个字符的文件。
+
+::for /r C:\"program files" %%i in (???.*) do echo %%i
+
+::搜索C:\program files目录树下文件名不超过3个字符的所有格式文件。
+
+::for /r C:\ %%i in (win*) do echo %%i
+
+::搜索C盘所有文件名以win开头的文件。
+
+::for /r C:\ %%i in (win*.e??) do echo %%i
+
+::搜索C盘所有文件名以win开头，并且扩展名为e开头且不超过3个字符的所 有文件。
+
+::for /r C:\ %%i in (boot.ini) do if exist %%i echo %%i
+
+::搜索整个C盘，找出boot.ini文件。
+
+::这是搜索具体文件名的例子，我们一定要记得用exist判断文件是否 存在，存在才输出，否则整个C盘的文件都会被输出。
+
+::for /r C:\windows %%i in (.) do echo %%i
+
+::枚举C:\windows目录树的所有文件。
+
+::for /l %%i in (1,1,100) echo %%i
+
+::循环100次，并且输出从1到100的连续数字。
+
+::for /l %%i in (100,-2,0) echo %%i
+
+::循环50次，并且输出从100到0的连续偶数。
+
+::@echo off
+
+::set str=c d e f g h i j k l m n o p q r s t u v w x y z
+
+::echo当前硬盘的分区有：
+
+::for %%i in (%str%) do if exist %%i: echo %%i:
+
+::pause
+
+::这段代码能检测硬盘都有哪些分区，包括U盘和移动硬盘的分区， 但是，当光驱中有盘的时候，也会被列出来，这是一个缺憾
+
+::
+
+::
+
+::如果有括号包含set /a计算表达式，表达式也有括号，那么表达式的 括号必须用转义字符，否则会显示括号不成对：
+
+::@echo off
+
+::setlocal enabledelayedexpansion for /l %%i in (1,1,10) do (
+
+::                                              set /a var=(%%i+1^)*2
+
+::echo !var!
+
+::)
+
+::pasue
+
+::注意到上面set /a var=(%%i+1^)*2括号有一个转义字符。
+
+::::::::::::::::查注册表指定数据:::::::::::::::::::::::
+
+::有bug异常代码，若路径中有空格，则会执行失败如：F:\Program Files\TGP\BlueStacks_tc_dt1\ProgramFiles\   Program Files中存在空格，得到的路径指是F;\Program
+
+::@echo off
+
+::set key_path="HKEY_LOCAL_MACHINE\SOFTWARE\BlueStacks_tc_dt"
+
+::for /f "tokens=3" %%i in ('reg query %key_path% /v InstallDir') do set str=%%i
+
+::set Hd-log_path=%str%HD-logCollector.exe
+
+::%Hd-log_path% -d
+
+:::a
+
+::if exit "C:\Users\kai\Desktop\BlueStacks-Support.zip" goto b
+
+::if not exit "C:\Users\kai\Desktop\BlueStacks-Support.zip" goto a再次强调一遍exist才是存在的意思！！！！！！Exit是退出！！！！！！！ 别他妈犯这么低级的错误
+
+:::b
+
+::echo日志已在桌面生成，感谢使用
+
+::pause >nul
+
+::正确写法： 为什么呢？？Delims=不写，则默认空格分段，如果用tokens=3那么F:\Program后有空格，则第三段就只是F:\Program但加上tokens=3,4就能把路径显示出来了，但后面还有空格的话（也不能显示完整）
+
+::@echo off
+
+set key_path="HKEY_LOCAL_MACHINE\SOFTWARE\BlueStacks_tc_dt"
+
+for /f "tokens=2,*" %%i in ('reg query %key_path% /v InstallDir') do (
+
+set str=%%j
+
+)
+
+set Hd-log_path="%str%HD-logCollector.exe"这个也要注意一下，要用双引号括起来!!
+
+%Hd-log_path% -d
+
+pause >nul
+
+::
+
+::这里补充for语句详解
+
+FOR %%variable IN (set) DO command [command-parameters]
+
+1、for、in和do是for语句的关键字，它们三个缺一不可；
+
+2、%%I是for语句中对形式变量的引用，就算它在do后的语句中没有参与语句的执行，也是必须出现的；
+
+3、in之后，do之前的括号不能省略；
+
+4、command1表示字符串或变量，command2表示字符串、变量或命令语句；
+
+1、for语句的形式变量I，可以换成26个字母中的任意一个，这些字母会区分大小写，也就是说，%%I和%%i会被认为不是同一个变量；形式变量I还可以换成其他的字符，但是，为了不与批处理中的%0～%9这10个形式变量发生冲突，请不要随意把%%I替换为%%0～%%9中的任意一个；
+
+2、in和do之间的command1表示的字符串或变量可以是一个，也可以是多个，每一个字符串或变量，我们称之为一个元素，每个元素之间，用空格键、跳格键、逗号、分号或等号分隔；
+
+3、for语句依次提取command1中的每一个元素，把它的值赋予形式变量I,带到do后的command2中参与命令的执行；并且每次只提取一个元素，然后执行一次do后的命令语句，而无论这个元素是否被带到command2中参与了command2的运行；当执行完一次do后的语句之后，再提取command1中的下一个元素，再执行一次command2，如此循环，直到command1中的所有元素都已经被提取完毕，该for语句才宣告执行结束；
+
+其中，第3点是最为关键的，它描述了for语句的执行过程，是for语句的精髓所在，大家一定要牢记这一条，才能深刻理解更为复杂的for流程。
+
+2、无论for语句做何种变化，它的执行过程仍然遵循基本的for流程：依次处理每个元素，直到所有的元素都被处理为止。只不过在for /f语句中，这里的元素是指文件中的每一行，也就是说，for /f语句是以行为单位处理文本文件的。这是一条极为重要的规则，在上一章中也强调过它的重要性，希望在接下来的学习过程中，你能时刻牢记这一原则，那么，很多问题将会迎刃而解
+
+验证这个说法的代码也很简单
+
+@echo off
+
+for /f %%i in (test.txt) do echo %%i&pause
+
+Pause
+
+试试把，是不是每次都只显示一行呢。
+
+例子文本内容如下
+
+Code1
+
+论坛的目标是：不求最大，但求最好，做最实用的批处理论坛。
+
+论坛地址：bbs.bathome.net。
+
+这里是：新手晋级的福地，高手论剑的天堂。
+
+切分字符串的利器：delims=
+
+@echo off
+
+for /f "delims=，" %%i in (test.txt) do echo %%i
+
+Pause
+
+上面code1的文本会变成：
+
+论坛的目标是：不求最大
+
+论坛地址：bbs.bathome.net。
+
+这里是：新手晋级的福地
+
+请按任意键继续...
+
+如果"delims=，."（符号列表做解释）那么输出结果将是
+
+论坛的目标是：不求最大
+
+论坛地址：bbs
+
+这里是：新手晋级的福地
+
+请按任意键继续...
+
+在这里，我们引入了一个新的开关："delims=，"，它的含义是：以逗号作为被处理的字符串的分隔符号。
+
+在批处理中，指定分隔符号的方法是：添加一个形如"delims=符号列表"的开关，这样，被处理的每行字符串都会被符号列表中罗列出来的符号切分开来。（为什么是符号列表上面做了解释）
+
+需要注意的是：如果没有指定"delims=符号列表"这个开关，那么，for /f语句默认以空格键或跳格键作为分隔符号。
+
+逐行读取test.txt中的内容，以点号和逗号切分每一行的内容（不存在点号和逗号的行，则不再切分，为了描述的方便，我们把被点号或逗号切分的一个一个的字符串片段，称之为节），然后，for /f会提取第一节的内容作为最终结果，显示在屏幕上。需要注意的是，在这里，所有行的字符串被切分成了两个以上的节，但是，[code7]的代码只会提取第一节字符串的内容，因为for /f语句默认只提取第一节的符串。
+
+：：
+
+：：定点提取tokens=
+
+：：文本txt内容如下
+
+：：尺有所短，寸有所长，学好批处理没商量，考虑问题复杂化，解决问题简洁化。
+
+：：代码
+
+@echo off
+
+for /f "delims=，tokens=2,5" %%i in (test.txt) do echo %%i
+
+Pause
+
+运行发现只显示2的数据，5的数据确提取不到
+
+解释：
+
+如果tokens=后面指定了多个数字，如果形式变量为%%i，那么，第一个数字指代的内容用第一个形式变量%%i来接收，第二个数字指代的内容用第二个形式变量%%j来接收，第三个数字指代的内容用第三个形式变量%%k来接收……第N个数字指代的内容用第N个形式变量来接收，其中，形式变量遵循字母的排序，第N个形式变量具体是什么符号，由第一个形式变量来决定：如果第一个形式变量是%%i，那么，第二个形式变量就是%%j；如果第一个形式变量用的是%%x，那么，第二个形式变量就是%%y。
+
+所以代码改成这样就解决了
+
+@echo off
+
+for /f "delims=，tokens=2,5" %%i in (test.txt) do echo %%i %%j
+
+Pause
+
+举例说明*号
+
+@echo off
+
+for /f "delims=，tokens=1,*" %%i in (test.txt) do echo %%i %%j
+
+Pause
+
+结果，第一个逗号不见了，取代它的是一个空格符号，其余部分保持不变。
+
+运行结果：尺有所短寸有所长，学好批处理没商量，考虑问题复杂化，解决问题简洁化。
+
+其中奥妙就在这个星号上面。
+
+tokens=后面所接的星号具备这样的功能：字符串从左往右被切分成紧跟在*之前的数值所表示的节数之后，字符串的其余部分保持不变，整体被*所表示的一个变量接收。
+
+::::::::::::::::::::::::::::::::::::::::::::::读取数据某列
+
+::比如读取abc.txt的第一行，记作变量a
+
+::然后读取第2行，记作变量b
+
+::代码如下：
+
+::@echo off
+
+::set/p  n=要第几行：
+
+::set/a n-=1
+
+::if "%n%"=="0" (set "skip=") else (set "skip=skip=%n%")
+
+::for /f "%skip% tokens=* delims="  %%i in (abc.txt) do (
+
+::set a=%%i&&goto:a)
+
+:::a
+
+::echo内容是：%a%
+
+::pause
+
+::
+
+::@echo off & setlocal enabledelayedexpansion
+
+::for /f "skip=7 tokens=4 delims= " %%a in ('dir /ad /o-d "E:\ffff"') do (
+
+::set b=%%a&&goto:a (这个很关键，不知道为什一定要。)
+
+::)
+
+:::a
+
+::echo %b%>6.txt
+
+::pause
+
+::加上xcopy /c /s D:\DRIVERS网卡\*  e:\ffff\%b%就能完成升级，柔性升级要替换的文件的啦！！！！
+
+::
+
+::
+
+::
+
+::skiP7解释如下   理解一下就行了。。
+
+::
+
+::驱动器E中的卷是 影视
+
+::卷的序列号是0008-4976
+
+:: E:\ffff的目录
+
+::
+
+::2016/02/02  20:31              ..
+
+::2016/02/02  20:31              .
+
+::2016/02/02  20:31              TGP3
+
+::2016/02/02  20:31              TGP2
+
+::2016/02/02  20:31              TGP1
+
+::2016/02/02  20:31              TGP
+
+::               0个文件0字节
+
+::               6个目录128,309,465,088可用字节
+
+::
+
+::
+
+::
+
+::::find后面一般都要加个转义字符::::老夫也不知道为什么：：：：：：
+
+::或者查找abc.txt中以a=开头的行，把等号后的内容记为变量a
+
+::这样的命令要怎么写？
+
+::代码如下
+
+::@echo off
+
+::for /f "tokens=1,* delims=="  %%a in ('find "a="^
+
+::set a=%%b&&goto:a)
+
+:::a
+
+::echo a=%a%
+
+::pause
+
+::
+
+:::::::::::::::::::::::::::::::::显示代码执行时长::::::::::::::::::::::
+
+::@echo off
+
+::set t=%time%
+
+::下面放你的代码
+
+::set t1=%time%
+
+::if "%t1:~,2%" lss "%t:~,2%" set "add=+24"
+
+::set /a "times=(%t1:~,2%-%t:~,2%%add%)*360000+(1%t1:~3,2%%%100-1%t:~3,2%%%100)*6000+(1%t1:~6,2%%%100-1%t:~6,2%%%100)*100+(1%t1:~-2%%%100-1%t:~-2%%%100)" ,"ss=(times/100)%%60","mm=(times/6000)%%60","hh=times/360000","ms=times%%100"
+
+::echo本次批处理运行时间为%hh%:%mm%:%ss%:%ms%
+
+::pause>nul
+
+::
+
+::
+
+::::::::::::::::::::::::::::::::很不错的计时器脚本:::::::::::::::::::::::::::::
+
+::
+
+::
+
+::title计时器
+
+::: start
+
+::echo可以输入具体时间，如“08:00”“20:00”
+
+::echo也可以输入倒计时，在最后加入“h”表示时,或“m”表示分
+
+::set /p want=请输入……
+
+::if %want:~-1% == h goto h
+
+::if %want:~-1% == m goto m
+
+::set nowh=%time:~0,2%
+
+::set nowm=%time:~3,2%
+
+::set nows=%time:~6,2%
+
+::set wanth=%want:~0,2%
+
+::set wantm=%want:~3,2%
+
+::set /a daojishi=(%wanth%-%nowh%)*3600+(%wantm%-%nowm%)*60-%nows%
+
+::::计算和现在的时间差
+
+::goto daojishi
+
+::: h
+
+::set /a daojishi=3600*%want:~0,-1%
+
+::::计算和现在的时间差
+
+::goto daojishi
+
+::: m
+
+::set /a daojishi=60*%want:~0,-1%
+
+::::计算和现在的时间差
+
+::: daojishi
+
+::echo倒计时%daojishi%秒
+
+::ping /n  %daojishi% 127.0.0.1 >nul
+
+::::暂停
+
+::echo msgbox "%want%已经到了！",,"计时器" >tishi.vbs
+
+::::调用vbs显示对话框
+
+::start tishi.vbs
+
+::ping /n 2 127.0.0.1 >nul
+
+::del tishi.vbs /q
+
+::goto start
+
+::
+
+::
+
+::
+
+::::::::::::::::::::::::::::::::::弹窗脚本:::::::::::::::
+
+::@echo off
+
+::echo msgbox "已经到了",vbYesNoCancel,"计时器" >tishi.vbs
+
+::start tishi.vbs
+
+::pause >nul
+
+::语法基本是echo msgbox "内容",,"标题" >XX.vbs
+
+::来详细拆分一下：其中"已经到了！"是提示框的内容vbYesNoCancel是选择语法  计时器是弹窗标题
+
+::下面是补充
+
+::@echo off
+
+::set b=
+
+::echo Wsh.Echo MsgBox ("测试提示框之十二",vbYesNoCancel,"选择") >tmp.vbs
+
+::for /f %%a in ('cscript tmp.vbs //nologo //e:vbscript') do set "b=%%a"
+
+::if %b%==6 goto Yes
+
+::if %b%==7 goto No
+
+::if %b%==2 goto Cancel
+
+::del /q tmp.vbs
+
+::exit
+
+:::Yes
+
+::echo你选择了“是”
+
+::echo.
+
+::pause>nul
+
+::goto end
+
+:::No
+
+::echo你选择了“否”
+
+::echo.
+
+::pause>nul
+
+::goto end
+
+:::Cancel
+
+::echo你选择了“取消”
+
+::echo.
+
+::pause>nul
+
+::goto end
+
+:::end
+
+::del /q tmp.vbs
+
+::exit
+
+::[/code]
+
+::经测试各种按扭的对应的数值如下：
+
+::[code]
+
+::OK（确定）＝1
+
+::Cancel（取消）＝2
+
+::Abort（终止）＝3
+
+::Retry（重试）＝4
+
+::Ignore（忽略）＝5
+
+::Yes（是）＝6
+
+::No（否）＝7
+
+::
+
+::：：：：：：：：：：：：：：：：：：：：：：：：：设置延时可以用timeout:::::::::::::::::
+
+::TIMEOUT [/T] timeout [/NOBREAK]   timeout /t 2 >nul
+
+::描述:
+
+::这个工具接受超时参数，等候一段指定的时间(秒)或等按任意键。它还接受
+
+::一个参数，忽视按键。
+
+::参数列表:
+
+::    /T        timeout指定等候的秒数。有效范围从-1到99999秒。
+
+::    /NOBREAK忽略按键并等待指定的时间。
+
+::    /?显示此帮助消息。
+
+::注意:超时值-1表示无限期地等待按键。
+
+：：
+
+：：一段有意思的代码，有时间好好理解一下
+
+@echo off&mode con cols=42 lines=20&color 02
+
+setlocal enabledelayedexpansion
+
+set code=123456789abcdef
+
+set m=1&set v=1
+
+title黑客帝国数码雨by bat-zw19750516
+
+:begin
+
+set /a a=%random%%%2,b=%random%%%3
+
+if %b% neq 0 (set b=%a%) else (set "b= ")
+
+set str=%str%%b%
+
+set /a n+=1
+
+if %n% lss 40 goto begin
+
+set /a m+=1,x+=1
+
+if %m% geq 20 set /a v+=1
+
+set str%m%=%str%
+
+cls&for /l %%i in (%m%,-1,%v%) do echo.!str%%i!
+
+if %x% equ 20 call :lp
+
+set str=&set n=0
+
+goto begin
+
+:lp
+
+set /a a=%random%%%15,x=0
+
+set a=!code:~%a%,1!
+
+color 0%a%
+
+解释一下：
+
+set/a "cup=%random%%%3+1"
+
+%random%是一个5位数随机数，%random%%%3就是取其除以3的余数，结果为（0，1，2），再加1就是（1,2,3）
+
+所以整句话的意思就是将变量cup的值设置为一个1-3的随机整数。
+
+@echo off & setlocal enabledelayedexpansion
+
+for /l %%i in (1 1 300) do (
+
+set var=%%i
+
+if /i "%var%"=="60" (goto :eof) else (tasklist | find "进程名" >nul && taskkill /f /im进程名
+
+ping /n 2 127.0.0.1>nul
+
+)
+
+)
+
+Pause
+
+获取软件的安装路径
+
+@echo off & setlocal enabledelayedexpansion
+
+for /f "delims=" %%i in ('find /i ":" %1 ^| findstr /i "^[a-z]:"') do echo %%i
+
+Pause
+
+大神所给的指示！！！！唉 用的不熟练啊！！
+
+@Echo off
+
+for /f "delims=" %%i in ('find /i ":" %1 ^| findstr /i "^[a-z]:"') do echo %%~dpi
+
+pause>nul
+
+能直接进入安装目录了
+
+@Echo off & setlocal enabledelayedexpansion
+
+for /f "delims=" %%i in ('find /i ":" %1 ^| findstr /i "^[a-z]:"') do  start %%~dpi
+
+pause>nul
+
+call set R2=%%R0:~%R1%,1%%
+
+或者
+
+setlocal enabledelayedexpansion
+
+set R2=!R0:~%R1%,1!
+
+拓展知识：
+
+在Windows系统中，我们可能看到将一个文件拖放到一个应用程序上，则可以使用当前应用程序打开当前文件的情况，那么在批处理中可不可以实现呢？答案是肯定的。来分析一下，该如何实现？如果要打开一个文件必须要指定该文件的路径地址才能打开，接下来的为题就是如何在批处理中获取拖放进来的文件地址。来看下面的例子：
+
+1
+
+2
+
+3
+
+4@echooff
+
+set/pinPath=请输入或拖放目录和文件...
+
+echo你输入的路径为：%inPath%
+
+pause
+
+这段代码中“inPath”变量用于获取用户输入的信息，可以输入，同样可以直接将目标目录或文件拖进当前解释器命令行，则可以立即获取当前文件或目录的地址。可以看成这是一种获取方式，但是这种拖放方式必须要在打开批处理执行解释器的情况下才可以使用。下面来看另一种方式，通过参数获取方式，先看例子：
+
+1
+
+2
+
+3
+
+4@echooff
+
+echo当前执行程序：%0
+
+echo拖拽的文件或目录：%1
+
+pause
+
+将这段代码保存为批处理文件，然后将任意一个文件或目录拖放到当前批处理文件上，看看效果。惊讶的是可以看到，“%1”这个变量参数输入的信息就是我们想要的目标文件或目录的完全路径，而“%0”还是当前文件完全路径。上面介绍了“%0”表示的是当前执行程序本身完全路径，而这里的“%1”用于表示目标文件或目录的完全路径地址，这是变量参数的需要注意的另一个特点，“%1”在某些特殊的情况下才能发挥这种引用效果。
+
+总结一下，在批处理脚本中的“%0”表示当前批处理程序本身的完全路径名，“%1”—“%9”表示对命令参数的引用，而这些参数应用最常见的就是“call”命令。需要注意的是“%1”在某些特殊情况下有另一种作用就是表示要执行的目标程序的完全路径，而这种用法大多是在拖拽文件的时候使用。
+
+方法一：
+
+搜索指定文件
+
+@echo off
+
+rem指定待搜索的文件
+
+set "FileName=BatHome_Batcher.txt"
+
+echo正在搜索，请稍候...
+
+for %%a in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (
+
+if exist %%a:\ (
+
+for /f "delims=" %%b in ('dir /a-d /s /b "%%a:\*%FileName%" 2^>nul') do (
+
+if /i "%%~nxb" equ "%FileName%" (
+
+echo,%%b
+
+)
+
+)
+
+)
+
+)
+
+Pause
+
+方法二：
+
+@echo off
+
+rem指定待搜索的文件
+
+set "FileName=BatHome_Batcher.txt"
+
+echo正在搜索，请稍候...
+
+for %%a in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (
+
+if exist %%a:\ (
+
+for /f "delims=" %%b in ('where /r %%a: "%FileName%" 2^>nul') do (
+
+if /i "%%~nxb" equ "%FileName%" (
+
+echo,%%b
+
+)
+
+)
+
+)
+
+)
+
+pause
+
+看思路：
+
+打开软件A---ping网址或者IP,ping值良好 小于200ms继续ping，若大于这个值或者掉包连续3次，立刻重启软件A，重启软件A继续ping以上动作重复
+
+@echo off
+
+:a
+
+start "" A.exe
+
+:b
+
+ping baidu.com>ping$
+
+type ping$|find "TTL"||goto kill
+
+for /f "tokens=6 delims==ms " %%a in ('find "平均" ping$') do if %%a gtr 150 goto kill
+
+goto b
+
+:kill
+
+taskkill /f /im "A.exe">nul
+
+goto a
+
+：用echo来作为参数 ：
+
+@echo off
+
+set /p var=
+
+echo %var%|findstr /be [0-9.]* >nul && echo Yes||echo No
+
+pause
+
+这里的echo %var%不用于显示功能， ，而用作参数功能。因为纯粹的
+
+%var%不可以被执行， ，我们又找不到合适的命令来作为%var%的开
+
+头 ，所以选用echo。后面的“>nul ”，是因为我们只需要参数功能就
+
+可以了 ，不需要其显示功能 ，所以用“>nul ”阻止信息显示。其余的
+
+一些需要带参数的命令， ，也可以参考这个用法
+
+在DOS中删除目录需要使用“md”命令，其中提供“/s”选项用于删除目录树结构，“/q”选项表示静默删除，但是使用“md”命令的限制是必须是空的目录，也就是目录中不能有文件，所有删除目录之前一定要先删除文件，删除文件需要使用“del”命令，其中提供了“/f”选项用于强制删除只读文件，“/a”选项表示删除任意属性的文件，“/q”选项表示静默删除。强制删除目录的代码如下：
+
+@echooff
+
+echo***************强制删除目录*****************
+
+echo使用方法：
+
+echo1.请输入要删除目录的完整路径地址。
+
+echo2.将要删除的目录拖放到执行中的批处理中。
+
+echo3.将要删除的目录拖放到程序图标上。
+
+echo注意：支持文件删除，删除后无法在回收站恢复。
+
+echo********************************************
+
+echo=
+
+setinPath=%1
+
+ifdefined inPath (
+
+goto op1
+
+)else(
+
+goto op2
+
+)
+
+:op1
+
+ifexist %inPath%\nul (
+
+rem 删除目录下所有文件(网传有del/f/a/q\\?%1做法)
+
+del/f/a/q%1
+
+rem 删除当前目录(网传有rd/s/q\\?%1做法)
+
+rd/s/q%1
+
+)else(
+
+rem 删除目录下所有文件(网传有del/f/a/q\\?%1做法)
+
+del/f/a/q%1
+
+)
+
+goto end
+
+:op2
+
+set/pinPath=目录完全路径地址(输入或拖放)并回车:
+
+ifexist %inPath%\nul (
+
+rem 删除目录下所有文件
+
+del/f/a/q%inPath%
+
+rem 删除当前目录
+
+rd/s/q%inPath%
+
+)else(
+
+rem 删除目录下所有文件
+
+del/f/a/q%inPath%
+
+)
+
+goto end
+
+:end
+
+echo=
+
+echo删除已完成!请刷新看看是否删除。
+
+Pause>nul
+
+4.重新注册系统组件
+
+系统组件是系统本身不可缺少的一部分，很多软件缺少了这些组件都无法正常运行。在Windows系统中最基层的系统组件分为DLL和OCX两种，其中DLL（全称Dynamic Link Library，“动态链接库”）文件，它是很多系统软件都依赖的一种对立程序；OCX（全称Object Linking and Embedding (OLE) Control Extension，“嵌入式对象控件”）文件是一种共享式的对立程序。首先了解了这两种组件，那么重新注册则就是将这些DLL或OCX组件卸载后重新安装一遍。那么使用什么命令来执行完成了？
+
+在Windows系统中提供了一个“regsvr32”外部程序来进行DLL和OCX文件的注册和卸载操作，虽然是一个外部程序，但是同样提供了命令操作行，可以通过在运行窗口或命令行中输入“regsvr32”命令来查看“regsvr32”工具的使用方法，这里不多说，具体选项应用都有说明。需要注意的是“regsvr32”命令只能用于操作“.dll”或“.ocx”文件。下面我们来看重新注册系统组件的代码（这里使用“for”语句来实现）：
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10
+
+11
+
+12@echooff
+
+setdPath=%systemroot%\system32\
+
+echo~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+echo输入目录，注册其下的所有DLL或OCX组件
+
+echo~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+set/pdPath=请输入你要注册组件的目录（默认为%dPath%）:
+
+for%%fin(%dPath%.dll)do(
+
+regsvr32/s%%f
+
+)
+
+for%%fin(%dPath%.ocx)do(
+
+regsvr32/s%%f
+
+)
+
+批量文件重命名操作
+
+批量文件重命名，这个问题在之前已经说过，但是没有讲过如何实现。下面我们就来看看这个案例。
+
+或许你在某些网站上下载一系列文件时，这些文件的名称都包含了该网站预定义的部分名称前缀或后缀，是否感觉不雅观，如何去掉这些前缀或后缀呢？一个一个修改？太OUT了!使用批量修改软件？我的第一想法就是别人可以做的批量修改软件我为什么不能。上面已经学习了批处理，那么我们就使用批处理实现简单的批量修改文件名称。
+
+要修改文件名称，必须要使用“ren”命令，具体操作就是使用“for”循环取到每一个文件名称，然后在名称上进行修改，最后使用新的字符串名称来替换原有的字符串名称即可。代码如下：
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10
+
+11
+
+12
+
+13
+
+14
+
+15
+
+16
+
+17
+
+18
+
+19
+
+20
+
+21
+
+22
+
+23
+
+24
+
+25
+
+26
+
+27
+
+28
+
+29
+
+30
+
+31
+
+32
+
+33
+
+34
+
+35@echooff
+
+echo#################################################
+
+echo使用说明:
+
+echo不指定工作路径则为当前所在目录。
+
+echo只需要指定需要替换的字符串和替换成的字符串即可。
+
+echo#################################################
+
+setdPath=%~dp0
+
+set/pdPath=设置文件所在目录(默认为%dPath%)：
+
+:start
+
+set/poldStr=要替换的字符串：
+
+set/pnewStr=要替换成的字符串：
+
+ifnot defined oldStr goto start
+
+ifnot defined newStr goto start
+
+setlocal enabledelayedexpansion
+
+for/f"skip=4 tokens=3*"%%ain('dir')do(
+
+ifnot %%a==^ (
+
+ifnot %%b==字节 (
+
+ifnot %%b==可用字节 (
+
+ifnot %%b==%~nx0 (
+
+setfileName=%%b
+
+setfileName=!fileName:%oldStr%=%newStr%!
+
+ren"%%b""!fileName!"
+
+)
+
+)
+
+)
+
+)
+
+)
+
+setexitop=n
+
+set/pexitop=是否退出?(Y/N)
+
+if/i%exitop% equ y (
+
+exit
+
+)else(
+
+goto start
+
+)
+
+pause
+
+上面的批量文件改名只是一个简单的示例
+
+@echo off
+
+setlocal EnableDelayedExpansion
+
+set ab cd=fff
+
+set "var=ab cd"
+
+if defined !var! (echo ab cd 被定义了) else echo ab cd 没有被定义
+
+pause
+
+复制代码
+
+嗯，果然可以。。这下简单多了。。。
+
+但是需注意的是仍然得用!!来引用变量。
+
+总结：
+
+检测含空格的变量名是否被定义过，需开启延迟变量，
+
+并把if defined这里的所有空格都用变量来代替
+
+或是将变量名赋值给别的变量，再用!!来引用这个新的变量。
+
+再试试代码1－6
+
+启动或关闭服务
+
+服务也是Windows系统的一个重要概念，一般服务是其他程序运行的基础环境，关于服务的具体信息可以自行参考其他资料。在MS-DOS提供了一个强悍的工具“net”命令，用于对WIndows基础信息进程综合管理，当然它也可以管理服务。“net”命令如何进行服务的启动和关闭管理呢？
+
+51
+
+52
+
+53
+
+54@echooff
+
+title 服务管理工具
+
+setlocal enabledelayedexpansion
+
+:menu
+
+echo=
+
+echo==================================================
+
+echo=
+
+echo-=服务管理工具=-
+
+echo=
+
+echo1.启动服务 2.关闭服务
+
+echoQ.退出
+
+echo=
+
+echo使用说明：启动或关闭服务需要输入服务名称，服务名称
+
+echo可以通过“service.msc”管理面板对应属性中查看。
+
+echo==================================================
+
+echo=
+
+set/pop=请选择操作:
+
+if%op%==1 goto startService
+
+if%op%==2 goto closeService
+
+if/i%op% equ qexit
+
+goto menu
+
+:startService
+
+echo=
+
+set/pserviceName=请输入你要启动的服务名称:
+
+for/f"delims="%%ain('net start ^| find /i "%serviceName%"')do(
+
+set/pchoice1=%serviceName%服务正在运行...是否关闭?(Y/N^)
+
+if/i!choice1! equ y (
+
+net stop %serviceName%
+
+)
+
+goto end
+
+)
+
+net start %serviceName%
+
+goto end
+
+:closeService
+
+echo=
+
+set/pserviceName=请输入你要关闭的服务名称:
+
+for/f"delims="%%ain('net start ^| find /i "%serviceName%"')do(
+
+net stop %serviceName%
+
+goto end
+
+)
+
+set/pchoice2=%serviceName%服务处于停止状态...是否开启?(Y/N^)
+
+if/i%choice2% equ y (
+
+net start !serviceName!
+
+)
+
+goto end
+
+:end
+
+echo=
+
+setexitop=n
+
+set/pexitop=是否退出?(Y/N)
+
+if/i%exitop% equ y (
+
+exit
+
+)else(
+
+goto menu
+
+)
+
+进程、端口信息管理
+
+进程是Windows系统中的一个重要概念，一般对应一个正在执行的程序，在MS-DOS同样提供了对进程实现管理的命令工具，常用的有“tasklist”命令和“taskkill”命令，其中“tasklist”命令用于查看进程信息，可以根据一个进程名称或进程ID来查看进程的相应信息；“taskkill”命令可以用于终止进程，可以根据一个进程名称或进程ID来终止进程或所在进程树。
+
+端口是Windows系统中的另一个重要概念，具有远程通信功能的程序一般至少需要监听一个端口来实现通信，端口不可以重复使用，一般一个端口只对应一个进程，但是一个进程可以对应多个端口（具体的关于“网络端口“的详细描述可以参考一些其他资料）。在MS-DOS系统中提供了“netstat”工具来查看网络端口，同时还可以查看端口对应的进程信息。下面我们就来实现这个例子：
+
+@echooff
+
+title 端口/进程管理工具
+
+setlocal enabledelayedexpansion
+
+:menu
+
+echo=
+
+echo╔-                                                     -╗
+
+echo本机开放的端口及使用该端口的进程管理工具
+
+echo= ..........................................................
+
+echo1.TCP/UDP分类列表查看
+
+echo2.本地端口查找
+
+echo3.进程终止
+
+echoQ:退出
+
+echo╚-                                                     -╝
+
+echo=
+
+setop=q
+
+set/pop=请选择操作:
+
+if%op%==1 goto seeType
+
+if%op%==2 goto searchPort
+
+if%op%==3 goto killProcess
+
+if/i%op% equ q goto end
+
+goto menu
+
+:seeType
+
+echo=
+
+echo-=TCP协议=-
+
+echo=
+
+echo本地地址       端口      进程ID    进程名称
+
+echo─────────────────────────────
+
+for/f"skip=4 tokens=2,5"%%ain('netstat -ano -p tcp')do(
+
+setresultStr=
+
+rem 拆分本地地址为IP和端口号
+
+for/f"delims=: tokens=1,2"%%iin("%%a")do(
+
+call :builderInfo 15 %%i
+
+setresultStr1= !resultStr!
+
+call :builderInfo 6 %%j
+
+setresultStr2=!resultStr1! !resultStr!
+
+)
+
+call :builderInfo 6 %%b
+
+setresultStr3=!resultStr2! !resultStr!
+
+rem 通过进程ID获取进程名称
+
+for/f"skip=2 delims=, tokens=1"%%iin('tasklist /fi "PID eq %%b" /fo csv')do(
+
+setresultStr4=!resultStr3! %%~i
+
+)
+
+echo!resultStr4!
+
+)
+
+echo==========================================================
+
+echo=
+
+echo-=UDP协议=-
+
+echo=
+
+echo本地地址       端口      进程ID    进程名称
+
+echo─────────────────────────────
+
+for/f"skip=4 tokens=2,4"%%ain('netstat -ano -p udp')do(
+
+setresultStr=
+
+rem 拆分本地地址为IP和端口号
+
+for/f"delims=: tokens=1,2"%%iin("%%a")do(
+
+call :builderInfo 15 %%i
+
+setresultStr1= !resultStr!
+
+call :builderInfo 6 %%j
+
+setresultStr2=!resultStr1! !resultStr!
+
+)
+
+call :builderInfo 6 %%b
+
+setresultStr3=!resultStr2! !resultStr!
+
+rem 通过进程ID获取进程名称
+
+for/f"skip=2 delims=, tokens=1"%%iin('tasklist /fi "PID eq %%b" /fo csv')do(
+
+setresultStr4=!resultStr3! %%~i
+
+)
+
+echo!resultStr4!
+
+)
+
+goto end
+
+:searchPort
+
+set/pprot=请输入要查找的端口号(输入b返回主菜单)：
+
+ifnot defined prot goto :searchPort
+
+if/i%prot% equ b goto :menu
+
+echo=
+
+echo=    -=本地%prot%端口使用明细=-
+
+echo=
+
+echo协议名称   进程ID    进程名称
+
+echo─────────────────
+
+for/f"tokens=1,2,4,5"%%ain('netstat -ano ^| findstr ":%prot%\>"')do(
+
+for/f%%iin('echo %%b ^| findstr ":%prot%\>"')do(
+
+setresultStr=
+
+if/i%%a equ UDP (
+
+call :builderInfo 6 %%c
+
+setresultStr1= UDP !resultStr!
+
+rem 通过进程ID获取进程名称和对应组件
+
+for/f"skip=2 delims=, tokens=1"%%iin('tasklist /fi "PID eq %%c" /fo csv')do(
+
+setresultStr2=!resultStr1! %%~i
+
+)
+
+)else(
+
+call :builderInfo 6 %%d
+
+setresultStr1= TCP !resultStr!
+
+rem 通过进程ID获取进程名称和对应组件
+
+for/f"skip=2 delims=, tokens=1"%%iin('tasklist /fi "PID eq %%d" /fo csv')do(
+
+setresultStr2=!resultStr1! %%~i
+
+)
+
+)
+
+echo!resultStr2!
+
+)
+
+)
+
+goto end
+
+:killProcess
+
+set/pproTag=请输入进程ID或名称(输入b返回主菜单):
+
+ifnot defined proTag goto killProcess
+
+if/i%proTag% equ b goto menu
+
+for/f%%iin('echo %proTag% ^| findstr ".exe .dll"')do(
+
+set/acount=0
+
+for/f"skip=2 delims=, tokens=1,2,3"%%ain('tasklist /fi "imagename eq %%i" /fo csv')do(
+
+set/acount+=1
+
+)
+
+setsure=N
+
+set/psure=确定结束%proTag%指向的!count!个进程吗?（Y/N）
+
+if/i!sure! equ y (
+
+taskkill/im%proTag%/f
+
+)else(
+
+goto killProcess
+
+)
+
+)
+
+set/anum=%proTag%
+
+if%num%==0echo请输入正确进程ID或进程名称，例如123或cmd.exe... &&     goto killProcess
+
+for/f"skip=2 delims=, tokens=1,2,3"%%ain('tasklist /fi "pid eq %num%" /fo csv')do(
+
+setsure=N
+
+set/psure=确定结束%num%指向进程吗?（Y/N）
+
+if/i!sure! equ y (
+
+taskkill/pid%num%/f
+
+)else(
+
+goto killProcess
+
+)
+
+)
+
+goto end
+
+:end
+
+echo=
+
+setexitop=n
+
+set/pexitop=是否退出?(Y/N)
+
+if/i%exitop% equ y (
+
+exit
+
+)else(
+
+goto menu
+
+)
+
+rem 构建输出信息，根据长度补全空格，是左边对齐
+
+:builderInfo
+
+rem 字符串最大长度
+
+setmaxLength=%1
+
+rem 原始字符串
+
+setstr=%2
+
+rem 原始字符串长度
+
+set/alength=0
+
+rem 计算字符串长度，使用循环截取单个字符是否等于空为依据
+
+:getLength
+
+set/alength+=1
+
+if"%str%"==""goto fillSpance
+
+for/f%%iin("%length%")do(
+
+ifnot"!str:~%%i,1!"==""goto getLength
+
+)
+
+rem 使用空格补全字符串，如果原始字符串长度小于最大字符串长度则在后面添加空格
+
+:fillSpance
+
+settemp=
+
+if/i%length% lss %maxLength% (
+
+for/l%%iin(%length%,1,%maxLength%)do(
+
+settemp= !temp!
+
+)
+
+)
+
+setresultStr=%str%!temp!
+
+使用时应该加/c:参数，c:后应写提示可输入的字符或数字，之间无空格。冒号是可选项。
+
+使用时加也可选择加/m:参数，m:后应写提示说明语。
+
+具体的命令使用请参见choice/? 如下图所示：
+
+常用情况，简单举例如下：新建一个文本文件，命名为choicedemo，修改文件类型为bat，用Notepad++打开编辑内容如下：
+
+1@echooff
+
+2:begin
+
+3choice/c:1234 /m:"please select"
+
+4if%errorlevel%==4gotoend
+
+5if%errorlevel%==3gotothree
+
+6if%errorlevel%==2gototwo
+
+7if%errorlevel%==1gotoone
+
+8:one
+
+9echo111
+
+10pause>nul
+
+11gotobegin
+
+12:two
+
+13echo222
+
+14pause>nul
+
+15gotobegin
+
+16:three
+
+17echo333
+
+18pause>nul
+
+19gotobegin
+
+20:end
+
+21echoI want to quit
+
+22pause>nul
+
+执行效果如下：
+
+尤其注意：此文件名称不可以命名为choice，因为那样会进入死循环，不告诉你我是肿么知道的
+
+今天远程一个客户，发现他的服务器会不定时自动断开网络，导致客户端连接不了服务端，但是重启服务以后又恢复正常，初步判断可能是由于某个系统服务与winpacp有冲突，建议用户恢复操作系统，他想等晚上再开始操作，今天就只好一直运行个ping，发现timed out就手动重启服务。我记得if可以利用程序的返回值作为判断，就帮他写了这个脚本：
+
+复制代码代码如下:
+
+@echo off
+
+: p
+
+ping 61.152.XX.XX
+
+IF ERRORLEVEL 1 goto aa
+
+IF ERRORLEVEL 0 goto bb
+
+:aa
+
+echo 正在重启软件服务...
+
+net stop MSSQLSERVER
+
+net start MSSQLSERVER
+
+goto p
+
+:bb
+
+echo 继续ping中。。。
+
+goto p
+
+这段命令的作用是，ping 61.152.XX.XX这个IP，如果ping不通则重启mssql服务，然后继续ping，如果能够ping通，还是继续ping...
+
+我们都知道if是命令行下的一个条件判断语句，ERRORLEVEL是它的一个参数，翻译过来就是“错误返回码”的意思，它的作用是判断前一条命令的错误返回值，然后和定义的字符值进行比较，再决定进行什么动作。
+
+格式是这样：
+
+if ERRORLEVEL nubmer commend
+
+例：if ERRORLEVEL 1 echo 返回值等于1
+
+那么大家就要问了，我怎么获取到前一个命令的返回值呢？
+
+方法很简单，拿ping来说，我们先运行一个ping 127.0.0.1
+
+运行结果是Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+
+这时候我们输入，echo %errorlevel%，就可以看到返回值是0，
+
+然后我们在ping一个不存在的ip,比如192.192.192.192
+
+ping命令显示 Request timed out.。
+
+ok,我们在用echo %errorlevel%查一下返回值是多少。
+
+现在变成了1。
+
+你也可以用这个方法来查询其他命令的返回值，比如copy、dir等等。
+
+当然if ERRORLEVEL对数值的比较方法不仅仅限于等于。在微软的帮助中我们可以看到：
+
+IF %ERRORLEVEL% LEQ 1 goto okay
+
+这里的LEQ表示“小于等于”，全部的比较参数如下：
+
+EQU - 等于
+
+NEQ - 不等于
+
+LSS - 小于
+
+LEQ - 小于或等于
+
+GTR - 大于
+
+GEQ - 大于或等于
+
+如有错误，感谢指正。
+
+IF-ERRORLEVEL
+
+建立TEST4.BAT，内容如下：
+
+@ECHO OFF
+
+XCOPY C:\AUTOEXEC.BAT D:\
+
+IF ERRORLEVEL 1 ECHO 文件拷贝失败
+
+IF ERRORLEVEL 0 ECHO 成功拷贝文件
+
+然后执行文件:
+
+C:\>TEST4
+
+如果文件拷贝成功，屏幕就会显示“成功拷贝文件”，否则就会显示“文件拷贝失败”。
+
+IF ERRORLEVEL 是用来测试它的上一个DOS命令的返回值的，注意只是上一个命令的返回值，而且返回值必须依照从大到小次序顺序判断。
+
+因此下面的批处理文件是错误的：
+
+@ECHO OFF
+
+XCOPY C:\AUTOEXEC.BAT D:\
+
+IF ERRORLEVEL 0 ECHO 成功拷贝文件
+
+IF ERRORLEVEL 1 ECHO 未找到拷贝文件
+
+IF ERRORLEVEL 2 ECHO 用户通过ctrl-c中止拷贝操作
+
+IF ERRORLEVEL 3 ECHO 预置错误阻止文件拷贝操作
+
+IF ERRORLEVEL 4 ECHO 拷贝过程中写盘错误
+
+无论拷贝是否成功，后面的：
+
+第三方插件：wget
+
+1、使用wget下载单个文件以下的例子是从网络下载一个文件并保存在当前目录
+
+wget http://cn.wordpress.org/wordpress-3.1-zh_CN.zip
+
+在下载的过程中会显示进度条，包含（下载完成百分比，已经下载的字节，当前下载速度，剩余下载时间）。
+
+2、使用wget -O下载并以不同的文件名保存
+
+wget默认会以最后一个符合”/”的后面的字符来命令，对于动态链接的下载通常文件名会不正确。
+
+错误：下面的例子会下载一个文件并以名称download.php?id=1080保存
+
+wget http://www.centos.bz/download?id=1
+
+即使下载的文件是zip格式，它仍然以download.php?id=1080命令。
+
+正确：为了解决这个问题，我们可以使用参数-O来指定一个文件名：
+
+wget -O wordpress.zip http://www.centos.bz/download.php?id=1080
+
+3、使用wget –limit -rate限速下载当你执行wget的时候，它默认会占用全部可能的宽带下载。但是当你准备下载一个大文件，而你还需要下载其它文件时就有必要限速了。
+
+wget –limit-rate=300k http://cn.wordpress.org/wordpress-3.1-zh_CN.zip
+
+4、使用wget -c断点续传使用wget -c重新启动下载中断的文件:
+
+wget -c http://cn.wordpress.org/wordpress-3.1-zh_CN.zip
+
+对于我们下载大文件时突然由于网络等原因中断非常有帮助，我们可以继续接着下载而不是重新下载一个文件。需要继续中断的下载时可以使用-c参数。
+
+使用第三方插件写的游戏：
+
+@echo off
+
+:reset
+
+cls
+
+mode con cols=120 lines=60
+
+color 79
+
+set 版本=beta4.0
+
+:check
+
+echo 正在检查程式完整性，如果损坏将尝试从HWT服务器获取......
+
+if not exist wget.exe echo 游戏程式已损坏，请重新获取 error 01&&pause>nul&&exit
+
+if not exist choice.exe wget http://hwtbbs.ddns.net:81/items/download/SLM/choice.exe
+
+cls
+
+if not exist cmdmp3.exe wget http://hwtbbs.ddns.net:81/items/download/SLM/cmdmp3.exe
+
+cls
+
+if not exist image.exe wget http://hwtbbs.ddns.net:81/items/download/SLM/image.exe
+
+cls
+
+if not exist logo.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/logo.bmp
+
+cls
+
+echo 主要程式检测完毕
+
+echo 开始检测资源包
+
+echo 连接服务器更新资源包中......
+
+cls
+
+wget http://hwtbbs.ddns.net:81/download/hwt.ok
+
+if not exist items\ md items
+
+if not exist items\sound md items\sound
+
+if not exist items\player md items\player
+
+if not exist items\gg md items\gg
+
+cls
+
+if not exist items\gameover.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/gameover.bmp -P items\
+
+Cls     （解释：-P,　--directory-prefix=名称　　 保存文件前先创建指定名称的目录。）
+
+if not exist items\help.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/help.bmp -P items\
+
+cls
+
+if not exist items\ico.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/ico.bmp -P items\
+
+cls
+
+if not exist items\jt.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/jt.bmp -P items\
+
+cls
+
+if not exist items\kk.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/kk.bmp -P items\
+
+cls
+
+if not exist items\menu.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/menu.bmp -P items\
+
+cls
+
+if not exist items\nyq.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/nyq.bmp -P items\
+
+cls
+
+if not exist items\nyqe1.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/nyqe1.bmp -P items\
+
+cls
+
+if not exist items\nyqe2.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/nyqe2.bmp -P items\
+
+cls
+
+if not exist items\nyqe3.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/nyqe3.bmp -P items\
+
+cls
+
+if not exist items\push.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/push.bmp -P items\
+
+cls
+
+if not exist items\savefinish.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/savefinish.bmp -P items\
+
+cls
+
+if not exist items\se.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/se.bmp -P items\
+
+cls
+
+if not exist items\tzcd.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/tzcd.bmp -P items\
+
+cls
+
+if not exist items\yes.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/yes.bmp -P items\
+
+cls
+
+if not exist items\player\1.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/player/1.bmp -P items\player\
+
+cls
+
+if not exist items\player\2.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/player/2.bmp -P items\player\
+
+cls
+
+if not exist items\player\3.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/player/3.bmp -P items\player\
+
+cls
+
+if not exist items\player\4.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/player/4.bmp -P items\player\
+
+cls
+
+if not exist items\player\5.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/player/5.bmp -P items\player\
+
+cls
+
+if not exist items\player\6.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/player/6.bmp -P items\player\
+
+cls
+
+if not exist items\player\7.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/player/7.bmp -P items\player\
+
+cls
+
+if not exist items\player\8.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/player/8.bmp -P items\player\
+
+cls
+
+if not exist items\sound\01.mp3 wget http://hwtbbs.ddns.net:81/items/download/SLM/sound/01.mp3 -P items\sound\
+
+cls
+
+if not exist items\sound\02.mp3 wget http://hwtbbs.ddns.net:81/items/download/SLM/sound/02.mp3 -P items\sound\
+
+cls
+
+if not exist items\sound\03.mp3 wget http://hwtbbs.ddns.net:81/items/download/SLM/sound/03.mp3 -P items\sound\
+
+cls
+
+if not exist items\sound\04.mp3 wget http://hwtbbs.ddns.net:81/items/download/SLM/sound/04.mp3 -P items\sound\
+
+cls
+
+if not exist items\sound\05.mp3 wget http://hwtbbs.ddns.net:81/items/download/SLM/sound/05.mp3 -P items\sound\
+
+cls
+
+if not exist items\sound\06.mp3 wget http://hwtbbs.ddns.net:81/items/download/SLM/sound/06.mp3 -P items\sound\
+
+cls
+
+if not exist items\sound\sound01.cmd wget http://hwtbbs.ddns.net:81/items/download/SLM/sound/sound01.cmd -P items\sound\
+
+cls
+
+if not exist items\sound\sound02.cmd wget http://hwtbbs.ddns.net:81/items/download/SLM/sound/sound02.cmd -P items\sound\
+
+cls
+
+if not exist items\sound\sound03.cmd wget http://hwtbbs.ddns.net:81/items/download/SLM/sound/sound03.cmd -P items\sound\
+
+cls
+
+if not exist items\sound\sound04.cmd wget http://hwtbbs.ddns.net:81/items/download/SLM/sound/sound04.cmd -P items\sound\
+
+cls
+
+if not exist items\sound\sound05.cmd wget http://hwtbbs.ddns.net:81/items/download/SLM/sound/sound05.cmd -P items\sound\
+
+cls
+
+if not exist items\sound\sound06.cmd wget http://hwtbbs.ddns.net:81/items/download/SLM/sound/sound06.cmd -P items\sound\
+
+cls
+
+if not exist items\sound\ze.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/sound/ze.bmp -P items\sound\
+
+cls
+
+if not exist items\sound\ze2.bmp wget http://hwtbbs.ddns.net:81/items/download/SLM/sound/ze2.bmp -P items\sound\
+
+cls
+
+if exist data.txt del data.txt
+
+cls
+
+wget http://hwtbbs.ddns.net:81/items/download/SLM/data.txt
+
+set num="1:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . data.txt ^| findstr/b %num%') do (
+
+set 数据更新=%%j
+
+)
+
+if "%数据更新%"=="1" goto 数据更新
+
+cls
+
+goto boot
+
+:boot
+
+taskkill /f /im "cmdmp3.exe" >nul
+
+mode con cols=120 lines=60
+
+color 79
+
+cls
+
+start /min items\sound\sound01.cmd
+
+image /d
+
+title 史莱姆历险记 %版本% ---HWT团队出品
+
+image items\ico.bmp 90 310
+
+set dyx=0
+
+set dyf=0
+
+set dyy=0
+
+set num1=40
+
+set playerzy=1
+
+set sx=0
+
+set sy=0
+
+set 分数=0
+
+set 粘液球数量=0
+
+set slm=0
+
+set nyqx=0
+
+set nyqy=0
+
+set gjt=0
+
+set dyf=
+
+set dyx=
+
+set dyy=
+
+set ddplayerzy=1
+
+set ddsx=0
+
+set ddsy=0
+
+set p1sm=0
+
+set p2sm=0
+
+set 关卡=1
+
+::------开发者调试用，开启请把0改为1，关闭反之----------
+
+set debug=0
+
+::------开发者调试用，开启请把0改为1，关闭反之----------
+
+set 威力=1
+
+set boss2=3
+
+set ppp=1
+
+set hcft=0
+
+set 怪物=1
+
+:reset1
+
+if "%num1%"=="0" goto next1
+
+echo.
+
+set /a num1=%num1%-1
+
+goto reset1
+
+:next1
+
+echo                                               copyright 2016 HWT
+
+ping -n 3 127.0.0.1 >nul
+
+image /d
+
+image items\sound\ze2.bmp 110 300
+
+ping -n 3 127.0.0.1 >nul
+
+image /d
+
+image items\sound\ze.bmp 110 300
+
+ping -n 3 127.0.0.1 >nul
+
+image /d
+
+image items\ico.bmp 90 310
+
+ping -n 3 127.0.0.1 >nul
+
+image /d
+
+set menuxy=1
+
+set menuy=220
+
+goto menu
+
+:menu
+
+cls
+
+image /d
+
+image items\menu.bmp 110 180
+
+image items\jt.bmp 640 %menuy% /TRANSPARENTBLT
+
+if "%ppp%"=="3" image items\push.bmp 220 760 /TRANSPARENTBLT&&set ppp=1
+
+choice /c wsep /n /t 1 /d p
+
+if %errorlevel%==1 set /a menuxy=%menuxy%-1
+
+if %errorlevel%==2 set /a menuxy=%menuxy%+1
+
+if %errorlevel%==3 goto menupd
+
+cls
+
+set /a ppp=%ppp%+1
+
+image items\menu.bmp 110 180
+
+if "%menuxy%" LSS "1" set menuxy=1
+
+if "%menuxy%" GTR "3" set menuxy=3
+
+if "%menuxy%"=="1" set menuy=220
+
+if "%menuxy%"=="2" set menuy=370
+
+if "%menuxy%"=="3" set menuy=520
+
+goto menu
+
+:menupd
+
+echo %menuxy%
+
+if "%menuxy%"=="1" goto 单人游戏
+
+if "%menuxy%"=="2" goto 多人游戏
+
+if "%menuxy%"=="3" goto 帮助
+
+goto menu
+
+:单人游戏
+
+taskkill /f /im "cmdmp3.exe" >nul
+
+set /a music=%random%%%6+1
+
+start /min items\sound\sound0%music%.cmd
+
+cls
+
+image /d
+
+:初始化单人游戏
+
+set /a p1sm=%关卡%*2*10
+
+set /a playerzy= %random%%%2+1
+
+set /a sx=%random%%%740+1
+
+set /a sy=%random%%%840+1
+
+set /a ddplayerzy=%playerzy%+2
+
+set /a ddsx=%random%%%740+1
+
+set /a ddsy=%random%%%840+1
+
+set /a p1sm=%关卡%*2*10
+
+set /a p2sm=%关卡%*2*12
+
+set 关卡=1
+
+set slm=1
+
+set 分数=0
+
+set 粘液球数量=0
+
+set fps=0
+
+set /a 怪物=%random%%%3+1
+
+goto 计算nyq
+
+:回到游戏
+
+cls
+
+image /d
+
+goto ga
+
+:计算nyq
+
+set disjs=0
+
+if %disjs% GTR %p1sm% goto 单人die
+
+if %disjs% GTR %p2sm% goto 闯关成功
+
+if "%p2sm%"=="0" goto 闯关成功
+
+if "%粘液球数量%" LSS "0" set 粘液球数量=0
+
+if "%slm%"=="1" goto 生成nyq
+
+if "%dyx%"=="" goto ga
+
+set /a dyx=%dyx%+%dyf%
+
+goto ga
+
+:怪物AI
+
+goto 怪物%怪物%
+
+:怪物1
+
+set hcft=1
+
+if %ddsx% lss %sx% (set /a ddsx=%ddsx%+10&&set ddplayerzy=4) else (set /a ddsx=%ddsx%-10&&set ddplayerzy=3)
+
+if %ddsy% lss %sy% (set /a ddsy=%ddsy%+10&&echo ok) else (set /a ddsy=%ddsy%-10&&echo not)
+
+goto 碰撞箱
+
+:怪物2
+
+if "%hcft%"=="0" goto 怪物2-1
+
+if %ddsx% lss %sx% (set /a ddsx=%ddsx%+12&&set ddplayerzy=6) else (set /a ddsx=%ddsx%-12&&set ddplayerzy=5)
+
+if %ddsy% lss %sy% (set /a ddsy=%ddsy%+12&&echo ok) else (set /a ddsy=%ddsy%-12&&echo not)
+
+:怪物2-1
+
+set hcft=1
+
+goto 碰撞箱
+
+:怪物3
+
+if "%hcft%"=="0" goto 怪物3-1
+
+if %ddsx% lss %sx% (set /a ddsx=%ddsx%+10&&set ddplayerzy=8) else (set /a ddsx=%ddsx%-10&&set ddplayerzy=7)
+
+if %ddsy% lss %sy% (set /a ddsy=%ddsy%+10&&echo ok) else (set /a ddsy=%ddsy%-10&&echo not)
+
+if "%ppp%"=="10" (
+
+:怪物3-1
+
+set hcft=1
+
+set /a ddsx=%random%%%500+150
+
+set /a ddsy=%random%%%500+150
+
+set /a ddplayerzys=%random%%%2+1
+
+set ppp=0
+
+)
+
+set /a ppp=%ppp%+1
+
+goto 碰撞箱
+
+:生成nyq
+
+set /a nyqx=%random%%%500+150
+
+set /a nyqy=%random%%%500+150
+
+set slm=0
+
+image items\nyq.bmp %nyqx% %nyqy% /TRANSPARENTBLT
+
+:ga
+
+if "%hcft%"=="0" goto 怪物AI
+
+if "%debug%"=="0" cls
+
+title 史莱姆历险记 %版本%  ---HWT团队出品      第%关卡%关      分数:%分数%   粘液球数量:%粘液球数量% 血量:%p1sm% 敌人血量:%p2sm%
+
+image /d
+
+if not "%dyx%"=="" image items\nyqe%威力%.bmp %dyx% %dyy% /TRANSPARENTBLT
+
+set /a gjt=%gjt%+1
+
+image items\player\%playerzy%.bmp %sx% %sy% /TRANSPARENTBLT&&image items\player\%ddplayerzy%.bmp %ddsx% %ddsy% /TRANSPARENTBLT
+
+image items\nyq.bmp %nyqx% %nyqy% /TRANSPARENTBLT
+
+choice /c wsadqepk123 /n /t 1 /d p
+
+if %errorlevel%==1 set /a sy=%sy%-25
+
+if %errorlevel%==2 set /a sy=%sy%+25
+
+if %errorlevel%==3 set /a sx=%sx%-25&&set playerzy=1
+
+if %errorlevel%==4 set /a sx=%sx%+25&&set playerzy=2
+
+if %errorlevel%==5 goto 单人游戏停止菜单
+
+if %errorlevel%==6 goto 发射粘液球
+
+if %errorlevel%==8 if "%debug%"=="0" (set debug=1) else (set debug=0)
+
+if %errorlevel%==9 set 威力=1
+
+if %errorlevel%==10 set 威力=2
+
+if %errorlevel%==11 set 威力=3
+
+goto 怪物AI
+
+:碰撞箱
+
+set 史莱姆碰撞箱x1=%sx%
+
+set 史莱姆碰撞箱y1=%sy%
+
+set /a 粘液球碰撞箱x1=%nyqx%-50
+
+set /a 粘液球碰撞箱y1=%nyqy%+50
+
+set /a 粘液球碰撞箱x2=%nyqx%+50
+
+set /a 粘液球碰撞箱y2=%nyqy%-50
+
+set 紫弹药碰撞箱x1=%dyx%
+
+set 紫弹药碰撞箱y1=%dyy%
+
+set /a 敌人碰撞箱x1=%ddsx%-50
+
+set /a 敌人碰撞箱y1=%ddsy%+100
+
+set /a 敌人碰撞箱x2=%ddsx%+50
+
+set /a 敌人碰撞箱y2=%ddsy%
+
+set fg=10
+
+if %gjt% GEQ %fg% (
+
+if %粘液球数量% LSS %威力% (set gjzt=不可攻击,弹药不足) else (set gjzt=可攻击)
+
+) else (
+
+set gjzt=不可攻击 冷却时间
+
+)
+
+if "%debug%"=="1" (
+
+cls
+
+echo ------调试模式DEBUG----按k关闭-----
+
+echo 史莱姆 X %sx%  敌人 X %ddsx%
+
+echo        Y %sy%       Y %ddsy%
+
+echo.
+
+echo. 史莱姆碰撞箱x1=%sx%
+
+echo. 史莱姆碰撞箱y1=%sy%
+
+echo  #################################
+
+echo. 粘液球碰撞箱x1 %粘液球碰撞箱x1%
+
+echo. 粘液球碰撞箱y1 %粘液球碰撞箱y1%
+
+echo. 粘液球碰撞箱x2 %粘液球碰撞箱x2%
+
+echo. 粘液球碰撞箱y2 %粘液球碰撞箱y2%
+
+echo. 紫弹药碰撞箱x1 %紫弹药碰撞箱x1%
+
+echo. 紫弹药碰撞箱y1 %紫弹药碰撞箱y1%
+
+echo  ################################
+
+echo. 敌人碰撞箱x1   %敌人碰撞箱x1%
+
+echo. 敌人碰撞箱y1   %敌人碰撞箱y1%
+
+echo. 敌人碰撞箱x2   %敌人碰撞箱x2%
+
+echo. 敌人碰撞箱y2   %敌人碰撞箱y2%
+
+echo.
+
+echo.   弹药冷却 %gjt%    %gjzt%  威力:%威力%
+
+echo. ################################
+
+echo.
+
+echo. ppp:%ppp%  怪物：%怪物%
+
+echo.
+
+echo. 输入按键:
+
+)
+
+if "%史莱姆碰撞箱x1%" GEQ "%粘液球碰撞箱x1%" if "%史莱姆碰撞箱x1%" LEQ "%粘液球碰撞箱x2%" if "%史莱姆碰撞箱y1%" LEQ "%粘液球碰撞箱y1%" if "%史莱姆碰撞箱y1%" GEQ "%粘液球碰撞箱y2%" goto 粘液球被吃掉
+
+if "%紫弹药碰撞箱x1%" GEQ "%粘液球碰撞箱x1%" if "%紫弹药碰撞箱x1%" LEQ "%粘液球碰撞箱x2%" if "%紫弹药碰撞箱y1%" LEQ "%粘液球碰撞箱y1%" if "%紫弹药碰撞箱y1%" GEQ "%粘液球碰撞箱y2%" goto 粘液球被吃掉2
+
+if "%史莱姆碰撞箱x1%" GEQ "%敌人碰撞箱x1%" echo a&&if "%史莱姆碰撞箱x1%" LEQ "%敌人碰撞箱x2%" echo a&&if "%史莱姆碰撞箱y1%" LEQ "%敌人碰撞箱y1%" echo a&&if "%史莱姆碰撞箱y1%" GEQ "%敌人碰撞箱y2%" goto 遇敌
+
+if "%紫弹药碰撞箱x1%" GEQ "%敌人碰撞箱x1%" echo b&&if "%紫弹药碰撞箱x1%" LEQ "%敌人碰撞箱x2%" echo b&&if "%紫弹药碰撞箱y1%" LEQ "%敌人碰撞箱y1%" echo b&&if "%紫弹药碰撞箱y1%" GEQ "%敌人碰撞箱y2%" goto 敌扣
+
+goto 计算nyq
+
+:敌扣
+
+set dyx=9999
+
+set dyy=9999
+
+if "%怪物%"=="3" set ppp=10
+
+set /a p2sm=%p2sm%-%关卡%*2*%威力%
+
+if "%怪物%"=="2" goto 怪物2-1
+
+goto 计算nyq
+
+:粘液球被吃掉
+
+set slm=1
+
+set /a 分数=%分数%+1
+
+set /a 粘液球数量=%粘液球数量%+1
+
+set /a f=%关卡%*2*10
+
+set /a p1sm=%p1sm%+1
+
+if %p1sm% GTR %f% set /a p1sm=%关卡%*2*10
+
+goto 计算nyq
+
+:遇敌
+
+if "%怪物%"=="3" set ppp=10
+
+set /a p1sm=%p1sm%-%关卡%*2
+
+if "0" GTR "%p1sm%" goto 单人die
+
+goto 计算nyq
+
+:粘液球被吃掉2
+
+set slm=1
+
+if "%怪物%"=="3" set ppp=10
+
+set /a 分数=%分数%+2
+
+goto 计算nyq
+
+:单人游戏停止菜单
+
+set ztxy=1
+
+set ztmx=300
+
+set ztmy=490
+
+image items\tzcd.bmp 270 380 /TRANSPARENTBLT
+
+goto tzxda
+
+:tzxda
+
+image items\kk.bmp %ztmx% %ztmy% /TRANSPARENTBLT
+
+choice /c adqe /n
+
+if %errorlevel%==1 set /a ztxy=%ztxy%-1
+
+if %errorlevel%==2 set /a ztxy=%ztxy%+1
+
+if %errorlevel%==3 goto 回到游戏
+
+if %errorlevel%==4 goto 判断停止菜单
+
+if "%ztxy%" LSS "1" set ztxy=1
+
+if "%ztxy%" GTR "3" set ztxy=3
+
+if "%ztxy%"=="1" set ztmx=300&&set ztmy=490
+
+if "%ztxy%"=="2" set ztmx=510&&set ztmy=490
+
+if "%ztxy%"=="3" set ztmx=410&&set ztmy=560
+
+cls
+
+image /d
+
+if not "%dyx%"=="" image items\nyqe%威力%.bmp %dyx% %dyy% /TRANSPARENTBLT
+
+image items\player\%playerzy%.bmp %sx% %sy% /TRANSPARENTBLT&&image items\player\%ddplayerzy%.bmp %ddsx% %ddsy% /TRANSPARENTBLT
+
+image items\nyq.bmp %nyqx% %nyqy% /TRANSPARENTBLT
+
+if not "%dyx%"=="" image items\nyqe.bmp %dyx% %dyy%
+
+image items\tzcd.bmp 270 380 /TRANSPARENTBLT
+
+image items\kk.bmp %ztmx% %ztmy% /TRANSPARENTBLT
+
+goto tzxda
+
+:判断停止菜单
+
+if "%ztxy%"=="1" goto 单人存档
+
+if "%ztxy%"=="2" goto 读取单人存档
+
+if "%ztxy%"=="3" goto reset
+
+:单人存档
+
+if exist saves.db del saves.db
+
+echo %sx%>>saves.db
+
+echo %sy%>>saves.db
+
+echo %nyqx%>>saves.db
+
+echo %nyqy%>>saves.db
+
+echo %分数% >>saves.db
+
+echo %粘液球数量% >>saves.db
+
+echo %playerzy% >>saves.db
+
+echo %dyf% >>saves.db
+
+echo %dyx% >>saves.db
+
+echo %dyy% >>saves.db
+
+echo %gjt% >>saves.db
+
+echo %ddsx%>>saves.db
+
+echo %ddsy%>>saves.db
+
+echo %ddplayerzy% >>saves.db
+
+echo %p1sm%>>saves.db
+
+echo %p2sm%>>saves.db
+
+echo %关卡% >>saves.db
+
+echo %威力% >>saves.db
+
+echo %怪物% >>saves.db
+
+image items\savefinish.bmp 400 270 /TRANSPARENTBLT
+
+ping -n 3 127.0.0.1 >nul
+
+cls&&image /d&&image items\player\%playerzy%.bmp %sx% %sy% /TRANSPARENTBLT&&image items\player\%ddplayerzy%.bmp %ddsx% %ddsy% /TRANSPARENTBLT&&image items\nyq.bmp %nyqx% %nyqy% /TRANSPARENTBLT&&image items\tzcd.bmp 270 380&&image items\kk.bmp %ztmx% %ztmy% /TRANSPARENTBLT
+
+goto tzxda
+
+:多人游戏
+
+echo 这里是多人游戏，开发中&&pause&&goto menu
+
+:设置
+
+echo 这里是设置，开发中&&pause&&goto menu
+
+:读取单人存档
+
+if not exist saves.db image items\se.bmp 200 -40 /TRANSPARENTBLT&&pause >nul&&goto 回到游戏
+
+set num="1:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set sx=%%j
+
+)
+
+set num="2:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set sy=%%j
+
+)
+
+set num="3:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set nyqx=%%j
+
+)
+
+set num="4:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set nyqy=%%j
+
+)
+
+set num="5:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set 分数=%%j
+
+)
+
+set num="6:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set 粘液球数量=%%j
+
+)
+
+set num="7:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set playerzy=%%j
+
+)
+
+if "%playerzy%"=="1 " set playerzy=1
+
+if "%playerzy%"=="2 " set playerzy=2
+
+set num="8:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set dyf=%%j
+
+)
+
+set num="9:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set dyx=%%j
+
+)
+
+set num="10:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set dyy=%%j
+
+)
+
+set num="11:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set gjt=%%j
+
+)
+
+set num="12:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set ddsx=%%j
+
+)
+
+set num="13:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set ddsy=%%j
+
+)
+
+set num="14:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set ddplayerzy=%%j
+
+)
+
+set num="15:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set p1sm=%%j
+
+)
+
+set num="16:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set p2sm=%%j
+
+)
+
+if "%ddplayerzy%"=="3 " set ddplayerzy=3
+
+if "%ddplayerzy%"=="4 " set ddplayerzy=4
+
+if "%ddplayerzy%"=="5 " set ddplayerzy=5
+
+if "%ddplayerzy%"=="6 " set ddplayerzy=6
+
+if "%ddplayerzy%"=="7 " set ddplayerzy=7
+
+if "%ddplayerzy%"=="8 " set ddplayerzy=8
+
+set num="17:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set 关卡=%%j
+
+)
+
+set num="18:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set 威力=%%j
+
+)
+
+set num="19:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . saves.db ^| findstr/b %num%') do (
+
+set 怪物=%%j
+
+)
+
+set /a 关卡=%关卡%+1-1
+
+if "%威力%"=="3 " set 威力=3
+
+if "%威力%"=="2 " set 威力=2
+
+if "%威力%"=="1 " set 威力=1
+
+if "%怪物%"=="2 " set 怪物=2
+
+if "%怪物%"=="1 " set 怪物=1
+
+goto 回到游戏
+
+:读取
+
+set %读取变量%=
+
+set num="%读取行数%:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . "%路径%" ^| findstr/b %num%') do (
+
+set %读取变量%=%%j
+
+)
+
+set 读取行数=0
+
+goto %读取去哪里%
+
+:帮助
+
+cls
+
+image /d
+
+image items\help.bmp 230 260
+
+:hcs
+
+choice /c a /n
+
+if %errorlevel%==1 goto menu
+
+goto hcs
+
+:发射粘液球
+
+set /a 威力计算=%威力%-1
+
+if %粘液球数量% LSS %威力% goto 碰撞箱
+
+set hc999=8
+
+if %gjt% GEQ %hc999% goto hc55
+
+goto 怪物AI
+
+:hc55
+
+set gjt=0
+
+set /a 粘液球数量=%粘液球数量%-1*%威力%
+
+set dyx=%sx%+20
+
+set /a dyy=%sy%+50
+
+if "%playerzy%"=="1" set dyf=-100
+
+if "%playerzy%"=="2" set dyf=100
+
+goto 碰撞箱
+
+:单人die
+
+image items\gameover.bmp 200 -40 /TRANSPARENTBLT
+
+pause >nul
+
+goto reset
+
+:闯关成功
+
+image /d
+
+image items\player\%playerzy%.bmp %sx% %sy% /TRANSPARENTBLT
+
+ping -n 1 127.0.0.1 >nul
+
+image items\yes.bmp 200 -40 /TRANSPARENTBLT
+
+image items\push.bmp 220 760 /TRANSPARENTBLT
+
+ping -n 3 127.0.0.1 >nul
+
+pause >nul
+
+set /a 关卡=%关卡%+1
+
+goto 新一关
+
+:新一关
+
+cls
+
+set num2=14
+
+:reset2
+
+if "%num2%"=="0" goto next2
+
+echo.
+
+set /a num2=%num2%-1
+
+goto reset2
+
+:next2
+
+taskkill /f /im "cmdmp3.exe" >nul
+
+set /a music=%random%%%6+1
+
+start /min items\sound\sound0%music%.cmd
+
+set hcft=0
+
+set /a ddplayerzy=%playerzy%+2
+
+set /a ddsx=%random%%%740+1
+
+set /a ddsy=%random%%%840+1
+
+set /a p1sm=%关卡%*2*10
+
+set /a p2sm=%关卡%*2*12
+
+set boss2=3
+
+set /a 怪物=%random%%%3+1
+
+echo                                                       第%关卡%关
+
+ping -n 3 127.0.0.1 >nul
+
+goto ga
+
+:数据更新
+
+set num="3:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . data.txt ^| findstr/b %num%') do (
+
+set 数据版本=%%j
+
+)
+
+set num="4:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . data.txt ^| findstr/b %num%') do (
+
+set 获取更新内容=%%j
+
+)
+
+if "%数据版本%"=="%版本%" goto boot
+
+echo. 更新内容 %获取更新内容%
+
+echo 发现可用更新，是否更新 y/n  版本为 %数据版本%
+
+choice /c yn /n
+
+if %errorlevel%==1 goto rhj
+
+if %errorlevel%==2 cls&goto boot
+
+cls
+
+goto 数据更新
+
+:rhj
+
+set num="2:"
+
+for /f "tokens=1*delims=:" %%i in ('findstr/n . data.txt ^| findstr/b %num%') do (
+
+set 数据链接=%%j
+
+)
+
+echo 后台下载更新中
+
+wget %数据链接% updata.exe&&updata.exe&&del updata.exe&&goto reset
+
+作者：Luckykailiu
+链接：https://www.jianshu.com/p/996dc350dca6
+来源：简书
+著作权归作者所有。商业转载请联系作者获得授权，非商业转载请注明出处。
