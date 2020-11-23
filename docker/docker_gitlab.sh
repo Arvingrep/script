@@ -15,3 +15,9 @@ docker run --detach \
   --volume $GITLAB_HOME/logs:/var/log/gitlab \
   --volume $GITLAB_HOME/data:/var/opt/gitlab \
   gitlab/gitlab-ce:latest
+
+
+
+
+#docker exec gitlab update-permissions  , if some issue is permission   
+#docker restart gitlab ,  after above command line  and restart gitlab 
