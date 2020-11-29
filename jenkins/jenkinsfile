@@ -1,0 +1,170 @@
+//node1
+node ("${NODE1}"){
+   //def mvnHome = '/usr/local/maven'
+   stage('git checkout') { 
+        checkout([$class: 'GitSCM', branches: [[name: 'mysql-develop']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[url: 'git@${ip}:tgjava/app.git']]])
+   }
+   stage('modify pom.xml file') {
+sh '''export NODE_NAME=app-pay-sc
+    export LOTWORK_HOME=/home/app/tg/workspace/$NODE_NAME
+        sed -i \'s/dev/prod/g\' $LOTWORK_HOME/app-pay/src/main/resources/application.yml
+sleep 0.1'''
+   }
+   stage('maven build') {
+        sh '''export JAVA_HOME=/usr/local/software/java/jdk1.8.0_181
+        /usr/local/maven/bin/mvn clean package -f app-pay/pom.xml -Dmaven.test.skip=true'''
+   }
+   stage('deploy') {
+sh '''export NODE_NAME=app-pay-sc
+    export LOTWORK_HOME=/home/app/tg/workspace/$NODE_NAME
+    JENKINS_NODE_COOKIE=dontkillme
+        echo "copy app project..."  
+    cp -rf $LOTWORK_HOME/app-pay/target/app-pay.jar /home/app/tg/app_project/
+    mv /home/app/tg/run_project/app-pay.jar /home/app/tg/run_project/backup/app-pay.jar_`date +"%Y-%m-%d-%H-%M"` &> /dev/null
+    cp -rf $LOTWORK_HOME/app-pay/target/app-pay.jar /home/app/tg/run_project/
+    echo "Stopping app..."
+    sleep 0.1
+        PID=$(ss -anplt|grep java|grep 9006|grep -v grep|awk '{print $6}'|awk -F ',' '{print $2}'|awk -F '=' '{print $2}')
+        [ -n "$PID" ] && kill -9 $PID
+    echo "Starting app..."
+    nohup /usr/local/software/java/jdk1.8.0_181/bin/java -Duser.timezone=GMT+8 -jar /home/app/tg/run_project/app-pay.jar > /home/app/tg/run_project/app-pay.log &
+    sleep 5
+    PORT=$(netstat -tuan |grep 9006 | awk '{print $4}' |awk -F ':' '{print $2}' | awk 'NR==1')
+    for ((i=1; i<=999999; i++))
+      do
+    if [ "$PORT" = "9006" ]; then
+      sleep 0.1
+      break
+    else
+      echo 'app-pay.jar未正常运行,无法检测到9006端口.请检查!!!!'
+    fi
+      sleep 0.1
+    PORT=$(netstat -tuan |grep 9006 | awk '{print $4}' |awk -F ':' '{print $2}' | awk 'NR==1')
+    done'''
+   }
+  stage('Done') {
+       sh "echo '生产环境server1完事了'"
+   }
+}
+
+// node2
+node ("${NODE2}"){
+   //def mvnHome = '/usr/local/maven'
+   stage('git checkout') { 
+        checkout([$class: 'GitSCM', branches: [[name: 'mysql-develop']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[url: 'git@${ip}:tgjava/app.git']]])
+   }
+   stage('modify pom.xml file') {
+sh '''export NODE_NAME=app-pay-sc
+    export LOTWORK_HOME=/home/app/tg/workspace/$NODE_NAME
+        sed -i \'s/dev/prod/g\' $LOTWORK_HOME/app-pay/src/main/resources/application.yml
+sleep 0.1'''
+   }
+   stage('maven build') {
+        sh '''export JAVA_HOME=/usr/local/software/java/jdk1.8.0_181
+        /usr/local/maven/bin/mvn clean package -f app-pay/pom.xml -Dmaven.test.skip=true'''
+   }
+   stage('deploy') {
+sh '''export NODE_NAME=app-pay-sc
+    export LOTWORK_HOME=/home/app/tg/workspace/$NODE_NAME
+    JENKINS_NODE_COOKIE=dontkillme
+        echo "copy app project..."  
+    cp -rf $LOTWORK_HOME/app-pay/target/app-pay.jar /home/app/tg/app_project/
+    mv /home/app/tg/run_project/app-pay.jar /home/app/tg/run_project/backup/app-pay.jar_`date +"%Y-%m-%d-%H-%M"` &> /dev/null
+    cp -rf $LOTWORK_HOME/app-pay/target/app-pay.jar /home/app/tg/run_project/
+    echo "Stopping app..."
+    sleep 1
+        PID=$(ss -anplt|grep java|grep 9006|grep -v grep|awk '{print $6}'|awk -F ',' '{print $2}'|awk -F '=' '{print $2}')
+        [ -n "$PID" ] && kill -9 $PID
+    echo "Starting app..."
+    nohup /usr/local/software/java/jdk1.8.0_181/bin/java -Duser.timezone=GMT+8 -jar /home/app/tg/run_project/app-pay.jar > /home/app/tg/run_project/app-pay.log &
+    sleep 0.1
+    PORT=$(netstat -tuan |grep 9006 | awk '{print $4}' |awk -F ':' '{print $2}' | awk 'NR==1')
+    for ((i=1; i<=999999; i++))
+      do
+    if [ "$PORT" = "9006" ]; then
+      sleep 0.1
+      break
+    else
+      echo 'app-pay.jar未正常运行,无法检测到9006端口.请检查!!!!'
+    fi
+      sleep 0.1
+    PORT=$(netstat -tuan |grep 9006 | awk '{print $4}' |awk -F ':' '{print $2}' | awk 'NR==1')
+    done'''
+   }
+  stage('Done') {
+       sh "echo '生产环境server2完事了'"
+   }
+}
+node ("${NODE3}"){
+   //def mvnHome = '/usr/local/maven'
+   stage('git checkout') { 
+        checkout([$class: 'GitSCM', branches: [[name: 'mysql-develop']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[url: 'git@${ip}:tgjava/app.git']]])
+   }
+   stage('modify pom.xml file') {
+sh '''export NODE_NAME=app-pay-sc
+    export LOTWORK_HOME=/home/app/tg/workspace/$NODE_NAME
+        sed -i \'s/dev/prod/g\' $LOTWORK_HOME/app-pay/src/main/resources/application.yml
+sleep 0.1'''
+   }
+   stage('maven build') {
+        sh '''export JAVA_HOME=/usr/local/software/java/jdk1.8.0_181
+        /usr/local/maven/bin/mvn clean package -f app-pay/pom.xml -Dmaven.test.skip=true'''
+   }
+   stage('deploy') {
+sh '''export NODE_NAME=app-pay-sc
+    export LOTWORK_HOME=/home/app/tg/workspace/$NODE_NAME
+    JENKINS_NODE_COOKIE=dontkillme
+        echo "copy app project..."  
+    cp -rf $LOTWORK_HOME/app-pay/target/app-pay.jar /home/app/tg/app_project/
+    mv /home/app/tg/run_project/app-pay.jar /home/app/tg/run_project/backup/app-pay.jar_`date +"%Y-%m-%d-%H-%M"` &> /dev/null
+    cp -rf $LOTWORK_HOME/app-pay/target/app-pay.jar /home/app/tg/run_project/
+    echo "Stopping app..."
+    sleep 1
+        PID=$(ss -anplt|grep java|grep 9006|grep -v grep|awk '{print $6}'|awk -F ',' '{print $2}'|awk -F '=' '{print $2}')
+        [ -n "$PID" ] && kill -9 $PID
+    echo "Starting app..."
+    nohup /usr/local/software/java/jdk1.8.0_181/bin/java -Duser.timezone=GMT+8 -jar /home/app/tg/run_project/app-pay.jar > /home/app/tg/run_project/app-pay.log &
+    sleep 0.1
+    PORT=$(netstat -tuan |grep 9006 | awk '{print $4}' |awk -F ':' '{print $2}' | awk 'NR==1')
+    for ((i=1; i<=999999; i++))
+      do
+    if [ "$PORT" = "9006" ]; then
+      sleep 0.1
+      break
+    else
+
+echo 'app-pay.jar未正常运行,无法检测到9006端口.请检查!!!!'
+    fi
+      sleep 0.1
+    PORT=$(netstat -tuan |grep 9006 | awk '{print $4}' |awk -F ':' '{print $2}' | awk 'NR==1')
+    done'''
+   }
+  stage('Done') {
+       sh "echo '生产环境server3完事了'"
+   }
+}
+
+//nodejs-WEB项目
+node ("${NODE1}")
+{
+   //def NODE_HOME = '/usr/local/nodejs'
+   stage('git checkout') { 
+        checkout([$class: 'GitSCM', branches: [[name: 'develop-v2']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[url: 'git@${ip}:tgclient/tgproject.git']]])
+   }
+   stage('npm-build-h5') {
+    nodejs('nodejs'){
+      }
+    //npm script
+    sh 'npm init -f'
+    sh 'cd h5-v2 && npm install'
+    sh 'cd h5-v2 && npm run build'
+    }
+   stage('npm-build-pc') {
+    nodejs('nodejs'){
+      }
+    //npm script
+    sh 'cd pc && npm install'
+    sh 'cd pc && npm run build'
+    }
+}
+
