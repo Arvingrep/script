@@ -1,2 +1,8 @@
-$ curl -fsSL https://get.docker.com -o get-docker.sh
-$ sudo sh get-docker.sh
+$ curl -fsSL https://get.docker.com -o get-docker.sh |sh 
+# $ sudo sh get-docker.sh
+
+# install docker-compose
+curl -L "https://github.com/docker/compose/releases/download/1.27.4/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+
+#system enable docker.service 
+systemctl enable docker
