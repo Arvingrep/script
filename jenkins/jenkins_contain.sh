@@ -11,4 +11,4 @@
 # 包含docker 的jenkins容器
 1. mkdir /var/jenkins_home
 2. sudo chown -R 1000:1000 /var/jenkins_home // 开放权限
-3. sudo docker run -d -u root --name jenkins -p 8080:8080 -p 50000:50000 -v /var/jenkins_home:/var/jenkins_home -v /var/run/docker.sock:/var/run/docker.sock -v $(which docker):/bin/docker jenkinsci/blueocean
+3. sudo docker run -d -u root  --restart always --name jenkins -p 8080:8080 -p 50000:50000 -v /var/jenkins_home:/var/jenkins_home -v /var/run/docker.sock:/var/run/docker.sock -v $(which docker):/bin/docker jenkinsci/blueocean
